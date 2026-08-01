@@ -5,6 +5,7 @@ local M = {}
 local store_instance
 local service_instance
 local registered_maps = {}
+local highlights_registered = false
 
 local function close_store()
   if store_instance then
@@ -68,6 +69,13 @@ local function register_keymaps()
       end,
       "open emergency",
     },
+    {
+      "g",
+      function()
+        M.tags()
+      end,
+      "manage tags",
+    },
   }
   for _, definition in ipairs(definitions) do
     local lhs = prefix .. definition[1]
@@ -93,6 +101,17 @@ function M.setup(opts)
 end
 
 function M._bootstrap()
+  require("todo.ui.highlights").setup()
+  if not highlights_registered then
+    highlights_registered = true
+    local group = vim.api.nvim_create_augroup("TodoNvimHighlights", { clear = true })
+    vim.api.nvim_create_autocmd("ColorScheme", {
+      group = group,
+      callback = function()
+        require("todo.ui.highlights").setup()
+      end,
+    })
+  end
   register_keymaps()
 end
 
@@ -118,8 +137,20 @@ function M.close()
   require("todo.ui.panel").close()
 end
 
+function M.tags()
+  require("todo.ui.tag_panel").open({
+    on_close = function()
+      require("todo.ui.panel").refresh()
+    end,
+  })
+end
+
 function M.add(opts)
   opts = opts or {}
+  local panel = require("todo.ui.panel")
+  if panel.add(opts) then
+    return
+  end
   require("todo.ui.form").open({ title = opts.title or "" }, function(input)
     local result, errors = M._service():create(input)
     if result then
@@ -130,6 +161,10 @@ function M.add(opts)
 end
 
 function M.edit(id)
+  local panel = require("todo.ui.panel")
+  if panel.edit(id) then
+    return
+  end
   local task = M._service().store:get(id)
   if not task then
     error(i18n.t("task_not_found", id))
@@ -168,6 +203,20 @@ function M.restore(id)
   local result, errors = M._service():restore(id)
   if not result then
     error(errors and i18n.t("task_not_found", id) or "restore failed")
+  end
+  require("todo.ui.panel").refresh()
+  return result
+end
+
+function M.delete(id)
+  local result, errors = M._service():delete_archived(id)
+  if not result then
+    if errors and errors.id then
+      error(i18n.t("task_not_found", id))
+    elseif errors and errors.archived then
+      error(i18n.t("delete_archived_only"))
+    end
+    error(i18n.t("delete_failed"))
   end
   require("todo.ui.panel").refresh()
   return result

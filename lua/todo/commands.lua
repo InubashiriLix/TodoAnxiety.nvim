@@ -52,6 +52,8 @@ function M.run(args)
       todo.toggle({ mode = words[1] })
     elseif command == "add" then
       todo.add({ title = rest })
+    elseif command == "tags" then
+      todo.tags()
     elseif command == "edit" then
       todo.edit(resolve_id(rest))
     elseif actions[command] then
@@ -60,6 +62,8 @@ function M.run(args)
       todo.archive(resolve_id(rest))
     elseif command == "restore" then
       todo.restore(resolve_id(rest))
+    elseif command == "delete" then
+      todo.delete(resolve_id(rest))
     elseif command == "close" then
       todo.close()
     else
@@ -79,8 +83,21 @@ function M.complete(arglead, cmdline)
   local after_todo = input:match("^Todo!?%s*(.*)$") or ""
   local command = after_todo:match("^(%S+)%s+")
   if not command then
-    local commands =
-      { "open", "toggle", "add", "edit", "start", "done", "cancel", "reopen", "archive", "restore", "close" }
+    local commands = {
+      "open",
+      "toggle",
+      "add",
+      "tags",
+      "edit",
+      "start",
+      "done",
+      "cancel",
+      "reopen",
+      "archive",
+      "restore",
+      "delete",
+      "close",
+    }
     return vim.tbl_filter(function(item)
       return vim.startswith(item, arglead)
     end, commands)

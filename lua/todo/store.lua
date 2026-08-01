@@ -129,6 +129,89 @@ function M:list(opts)
   return self:_hydrate(rows)
 end
 
+function M:list_tags()
+  local rows = self.db:eval("SELECT name FROM tags ORDER BY lower(name), name")
+  local result = {}
+  for _, row in ipairs(type(rows) == "table" and rows or {}) do
+    result[#result + 1] = row.name
+  end
+  return result
+end
+
+function M:tag_stats()
+  local rows = self.db:eval([[
+    SELECT tags.name, COUNT(task_tags.task_id) AS task_count
+    FROM tags
+    LEFT JOIN task_tags ON task_tags.tag_id = tags.id
+    GROUP BY tags.id, tags.name
+    ORDER BY lower(tags.name), tags.name
+  ]])
+  local result = {}
+  for _, row in ipairs(type(rows) == "table" and rows or {}) do
+    result[#result + 1] = { name = row.name, task_count = tonumber(row.task_count) or 0 }
+  end
+  return result
+end
+
+function M:create_tag(name)
+  self.db:eval("INSERT OR IGNORE INTO tags(name) VALUES(:name)", { name = name })
+  local row = query_one(self.db, "SELECT name FROM tags WHERE name = :name COLLATE NOCASE", { name = name })
+  return row and row.name or nil
+end
+
+function M:rename_tag(old_name, new_name)
+  return transaction(self.db, function()
+    local source = query_one(self.db, "SELECT id FROM tags WHERE name = :name COLLATE NOCASE", { name = old_name })
+    if not source then
+      return nil
+    end
+    local target = query_one(self.db, "SELECT id FROM tags WHERE name = :name COLLATE NOCASE", { name = new_name })
+    if target and tonumber(target.id) ~= tonumber(source.id) then
+      self.db:eval(
+        [[
+        INSERT OR IGNORE INTO task_tags(task_id, tag_id)
+        SELECT task_id, :target_id FROM task_tags WHERE tag_id = :source_id
+      ]],
+        { target_id = target.id, source_id = source.id }
+      )
+      self.db:eval("DELETE FROM tags WHERE id = :id", { id = source.id })
+      return new_name
+    end
+    self.db:eval("UPDATE tags SET name = :new_name WHERE id = :id", { new_name = new_name, id = source.id })
+    return new_name
+  end)
+end
+
+function M:delete_tag(name)
+  local row = query_one(self.db, "SELECT id FROM tags WHERE name = :name COLLATE NOCASE", { name = name })
+  if not row then
+    return false
+  end
+  self.db:eval("DELETE FROM tags WHERE id = :id", { id = row.id })
+  return true
+end
+
+function M:stats()
+  local row = query_one(
+    self.db,
+    [[
+    SELECT
+      SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END) AS active,
+      SUM(CASE WHEN archived_at IS NULL
+        AND status IN ('todo', 'in_progress')
+        AND (due_date IS NOT NULL OR priority <= 1)
+        THEN 1 ELSE 0 END) AS emergency,
+      SUM(CASE WHEN archived_at IS NOT NULL THEN 1 ELSE 0 END) AS archived
+    FROM tasks
+  ]]
+  ) or {}
+  return {
+    active = tonumber(row.active) or 0,
+    emergency = tonumber(row.emergency) or 0,
+    archived = tonumber(row.archived) or 0,
+  }
+end
+
 function M:get(id)
   local row = query_one(self.db, "SELECT * FROM tasks WHERE id = :id", { id = id })
   return row and self:_hydrate({ row })[1] or nil
@@ -229,6 +312,15 @@ function M:restore(id)
     now = os.time(),
   })
   return self:get(id)
+end
+
+function M:delete_archived(id)
+  local task = self:get(id)
+  if not task or not task.archived_at then
+    return false
+  end
+  self.db:eval("DELETE FROM tasks WHERE id = :id AND archived_at IS NOT NULL", { id = id })
+  return self:get(id) == nil
 end
 
 return M

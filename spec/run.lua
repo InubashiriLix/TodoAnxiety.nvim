@@ -41,7 +41,18 @@ end)
 test("command completion distinguishes subcommands and arguments", function()
   local commands = require("todo.commands")
   eq(commands.complete("op", ":Todo op"), { "open" })
+  eq(commands.complete("ta", ":Todo ta"), { "tags" })
   eq(commands.complete("s", ":Todo open s"), { "sidebar" })
+  eq(commands.complete("del", ":Todo del"), { "delete" })
+end)
+
+test("plugin UI source contains no mouse or Ctrl-Space mappings", function()
+  for _, path in ipairs(vim.fn.glob(root .. "/lua/**/*.lua", false, true)) do
+    local source = table.concat(vim.fn.readfile(path), "\n")
+    assert(not source:find("<LeftMouse>", 1, true), "mouse mapping remains in " .. path)
+    assert(not source:find("getmousepos", 1, true), "mouse handling remains in " .. path)
+    assert(not source:find("<C-Space>", 1, true), "Ctrl-Space mapping remains in " .. path)
+  end
 end)
 
 test("model validates and normalizes input", function()
@@ -61,6 +72,78 @@ test("model validates and normalizes input", function()
   local invalid, errors = model.validate({ title = "", priority = "P9", deadline = "2026-02-30" })
   eq(invalid, nil)
   assert(errors.title and errors.priority and errors.deadline)
+end)
+
+test("form state tracks fields, presets, tags, and dirty state", function()
+  local FormState = require("todo.ui.form_state")
+  local state = FormState.new({ title = "Original", priority = 1, tags = { "nvim" } })
+  eq(state:is_dirty(), false)
+  state:set("title", "Changed")
+  eq(state:is_dirty(), true)
+  state:add_tag("Lua")
+  state:add_tag("lua")
+  eq(state:get("tags"), { "Lua", "nvim" })
+  local now = os.time({ year = 2026, month = 8, day = 1, hour = 9, min = 0, sec = 0 })
+  eq(state:set_deadline_preset("tomorrow", now), "2026-08-02")
+  state:remove_last_tag()
+  eq(state:get("tags"), { "Lua" })
+  assert(state:validate())
+end)
+
+test("calendar state navigates months, leap days, and optional time", function()
+  local CalendarState = require("todo.ui.calendar_state")
+  local now = os.time({ year = 2026, month = 8, day = 1, hour = 9, min = 0, sec = 0 })
+  local calendar = CalendarState.new("2028-02-29 18:00", now)
+  eq(calendar:value(), "2028-02-29 18:00")
+  eq(calendar:days_in_month(), 29)
+  calendar:shift_month(1)
+  eq(calendar:value(), "2028-03-29 18:00")
+  calendar:move_days(3)
+  eq(calendar:value(), "2028-04-01 18:00")
+  calendar:set_time("")
+  eq(calendar:value(), "2028-04-01")
+  eq(#calendar:cells(), 42)
+end)
+
+test("time state supports arbitrary HHMM input and fine adjustment", function()
+  local TimeState = require("todo.ui.time_state")
+  local time = TimeState.new("2026-08-01 18:07")
+  eq(time:value(), "18:07")
+  time:move(1)
+  eq(time:value(), "19:07")
+  time:switch(1):move(-5)
+  eq(time:value(), "19:02")
+  time.field = "hour"
+  eq(time:input_digit(0), nil)
+  eq(time:input_digit(9), true)
+  eq(time:input_digit(3), nil)
+  eq(time:input_digit(7), true)
+  eq(time:value(), "09:37")
+  time.field = "hour"
+  time:input_digit(2)
+  eq(time:input_digit(9), false)
+  eq(time:value(), "09:37")
+end)
+
+test("dashboard viewmodel groups statuses and truncates Unicode", function()
+  local viewmodel = require("todo.ui.viewmodel")
+  local tasks = {
+    { id = 1, status = "todo" },
+    { id = 2, status = "in_progress" },
+    { id = 3, status = "todo" },
+    { id = 4, status = "done" },
+  }
+  local sections = viewmodel.sections(tasks, "active")
+  eq(
+    vim.tbl_map(function(section)
+      return section.key
+    end, sections),
+    { "in_progress", "todo", "done" }
+  )
+  eq(#sections[2].tasks, 2)
+  local truncated = viewmodel.truncate("这是一个很长的任务标题", 10)
+  assert(vim.fn.strdisplaywidth(truncated) <= 10)
+  assert(vim.endswith(truncated, "…"))
 end)
 
 test("urgency combines deadline and priority deterministically", function()
@@ -141,6 +224,18 @@ local function memory_store(tasks)
     task.archived_at = nil
     return task
   end
+  function store:delete_archived(id)
+    for index, task in ipairs(self.rows) do
+      if task.id == id and task.archived_at then
+        table.remove(self.rows, index)
+        return true
+      end
+    end
+    return false
+  end
+  function store:list_tags()
+    return { "existing", "work" }
+  end
   return store
 end
 
@@ -172,35 +267,244 @@ test("service searches and combines filters", function()
   eq(created.id, 100)
 end)
 
-test("native panel opens in both modes with shared renderer", function()
-  require("todo.config").setup({ keymaps = { enabled = false }, ui = { default_mode = "float" } })
-  local fake_service = require("todo.service").new(memory_store({
-    {
-      id = 1,
-      title = "Panel task",
-      description = "Visible",
-      status = "todo",
-      priority = 1,
-      tags = { "ui" },
-      created_at = 1,
-    },
-  }))
-  package.loaded.todo = {
-    _service = function()
-      return fake_service
-    end,
-  }
-  package.loaded["todo.ui.panel"] = nil
-  local panel = require("todo.ui.panel")
-  panel.open({ mode = "float", view = "active" })
-  assert(panel.is_open())
-  eq(panel.inspect_state().tasks[1].title, "Panel task")
-  panel.close()
-  panel.open({ mode = "sidebar", view = "active" })
-  assert(panel.is_open())
-  panel.close()
-  package.loaded.todo = nil
+test("service permanently deletes archived tasks only", function()
+  local store = memory_store({
+    { id = 1, title = "Active", archived_at = nil },
+    { id = 2, title = "Archived", archived_at = 10 },
+  })
+  local service = require("todo.service").new(store)
+  local deleted, active_error = service:delete_archived(1)
+  eq(deleted, nil)
+  eq(active_error, { archived = "required" })
+  assert(service:delete_archived(2))
+  eq(store:get(2), nil)
+  local missing, missing_error = service:delete_archived(999)
+  eq(missing, nil)
+  eq(missing_error, { id = "not_found" })
 end)
+
+local nui_ok = pcall(require, "nui.popup")
+if nui_ok then
+  test("NUI dashboard opens in responsive float and sidebar modes", function()
+    require("todo.config").setup({ keymaps = { enabled = false }, ui = { default_mode = "float" } })
+    local fake_service = require("todo.service").new(memory_store({
+      {
+        id = 1,
+        title = "Panel task",
+        description = "Visible",
+        status = "todo",
+        priority = 1,
+        tags = { "ui" },
+        created_at = 1,
+      },
+    }))
+    package.loaded.todo = {
+      _service = function()
+        return fake_service
+      end,
+    }
+    package.loaded["todo.ui.panel"] = nil
+    local panel = require("todo.ui.panel")
+    panel.open({ mode = "float", view = "active" })
+    vim.wait(20)
+    assert(panel.is_open())
+    eq(panel.inspect_state().tasks[1].title, "Panel task")
+    eq(panel.inspect_state().owner.wide, false)
+    local float_lines = vim.api.nvim_buf_get_lines(panel.inspect_state().owner.list.bufnr, 0, -1, false)
+    assert(vim.iter(float_lines):any(function(line)
+      return line:find("Panel task", 1, true) ~= nil
+    end))
+    panel.close()
+    panel.open({ mode = "sidebar", view = "active" })
+    vim.wait(20)
+    assert(panel.is_open())
+    local sidebar_state = panel.inspect_state()
+    local sidebar_width = vim.api.nvim_win_get_width(sidebar_state.owner.split.winid)
+    local sidebar_lines = vim.api.nvim_buf_get_lines(sidebar_state.owner.split.bufnr, 0, -1, false)
+    eq(sidebar_state.tab_line, 2)
+    for _, line in ipairs(sidebar_lines) do
+      assert(vim.fn.strdisplaywidth(line) <= sidebar_width, "sidebar line exceeds window width: " .. line)
+    end
+    assert(sidebar_lines[#sidebar_lines]:find("[a +]", 1, true))
+    vim.api.nvim_set_current_win(sidebar_state.owner.split.winid)
+    vim.fn.feedkeys("a", "xt")
+    assert(
+      vim.wait(100, function()
+        return require("todo.ui.form").inspect_state() ~= nil
+      end),
+      "add form did not open"
+    )
+    assert(not panel.is_open(), "dashboard should be suspended while the form is open")
+    vim.wait(20)
+    require("todo.ui.form").close(true)
+    assert(
+      vim.wait(100, function()
+        return panel.is_open()
+      end),
+      "dashboard did not resume after the form closed"
+    )
+    eq(panel.inspect_state().mode, "sidebar")
+    eq(panel.inspect_state().view, "active")
+    panel.close()
+    package.loaded.todo = nil
+  end)
+
+  test("NUI form mounts structured fields and closes cleanly", function()
+    local fake_service = require("todo.service").new(memory_store({}))
+    package.loaded.todo = {
+      _service = function()
+        return fake_service
+      end,
+    }
+    package.loaded["todo.ui.form"] = nil
+    local form = require("todo.ui.form")
+    local close_reason
+    form.open({ title = "Structured form", priority = 2 }, function(input)
+      return fake_service:create(input)
+    end, {
+      on_close = function(reason)
+        close_reason = reason
+      end,
+    })
+    local form_state = assert(form.inspect_state())
+    eq(form_state.state:get("title"), "Structured form")
+    assert(form_state.layout)
+    vim.wait(20)
+    local priority_line = vim.api.nvim_buf_get_lines(form_state.components.priority.bufnr, 0, 1, false)[1]
+    for value = 0, 3 do
+      assert(priority_line:find("P" .. value, 1, true), "priority selector does not show every choice")
+    end
+    vim.api.nvim_set_current_win(form_state.components.priority.winid)
+    vim.cmd("stopinsert")
+    vim.fn.feedkeys("0", "xt")
+    assert(
+      vim.wait(100, function()
+        return form_state.state:get("priority") == "P0"
+      end),
+      "priority number shortcut did not select P0"
+    )
+    local status_line = vim.api.nvim_buf_get_lines(form_state.components.status.bufnr, 0, 1, false)[1]
+    assert(status_line:find("Todo", 1, true) and status_line:find("In progress", 1, true))
+    vim.api.nvim_set_current_win(form_state.components.status.winid)
+    vim.fn.feedkeys("2", "xt")
+    assert(
+      vim.wait(100, function()
+        return form_state.state:get("status") == "in_progress"
+      end),
+      "status number shortcut did not select in-progress"
+    )
+    form_state.open_calendar()
+    assert(form_state.calendar_state and form_state.choose_calendar_date)
+    local calendar_lines = vim.api.nvim_buf_get_lines(form_state.transient.bufnr, 0, -1, false)
+    for _, line in ipairs(calendar_lines) do
+      assert(vim.fn.strdisplaywidth(line) <= 32, "calendar line exceeds popup width: " .. line)
+    end
+    local expected_deadline = form_state.calendar_state:value()
+    form_state.choose_calendar_date()
+    assert(
+      vim.wait(100, function()
+        return form_state.state:get("deadline") == expected_deadline
+      end),
+      "calendar did not update the deadline field"
+    )
+    local deadline_date = assert(expected_deadline:match("^(%d%d%d%d%-%d%d%-%d%d)"))
+    form_state.open_time_picker(require("todo.ui.calendar_state").new(expected_deadline))
+    assert(form_state.time_state and form_state.apply_time, "arbitrary time picker did not open")
+    for _, line in ipairs(vim.api.nvim_buf_get_lines(form_state.transient.bufnr, 0, -1, false)) do
+      assert(vim.fn.strdisplaywidth(line) <= 44, "time picker line exceeds popup width: " .. line)
+    end
+    for _, digit in ipairs({ 0, 7, 4, 3 }) do
+      form_state.time_state:input_digit(digit)
+    end
+    form_state.apply_time()
+    assert(
+      vim.wait(100, function()
+        return form_state.state:get("deadline") == deadline_date .. " 07:43"
+      end),
+      "time picker did not accept arbitrary HHMM input"
+    )
+    assert(form_state.components.quick == nil, "removed quick-deadline row is still mounted")
+    for _, component in pairs(form_state.components) do
+      for _, mode in ipairs({ "n", "i" }) do
+        for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(component.bufnr, mode)) do
+          assert(mapping.lhs ~= "<LeftMouse>", "form must not register mouse mappings")
+        end
+      end
+    end
+    vim.api.nvim_set_current_win(form_state.components.tag_input.winid)
+    local tag_prompt = vim.api.nvim_buf_get_lines(form_state.components.tag_chips.bufnr, 1, 2, false)[1]
+    assert(tag_prompt:find("choose existing", 1, true), "tag panel keyboard path is not visible")
+    for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(form_state.components.tag_input.bufnr, "i")) do
+      assert(mapping.lhs ~= "<Esc>", "Escape must retain its native Insert-mode meaning")
+    end
+    form_state.open_tag_panel()
+    local tag_panel = require("todo.ui.tag_panel")
+    assert(tag_panel.is_open() and #tag_panel.inspect_state().visible >= 2, "tag selector panel did not open")
+    local tag_panel_state = tag_panel.inspect_state()
+    local panel_keys = {}
+    for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(tag_panel_state.popup.bufnr, "n")) do
+      assert(mapping.lhs ~= "<LeftMouse>", "tag panel must not register mouse mappings")
+      panel_keys[mapping.lhs] = true
+    end
+    for _, key in ipairs({ "a", "r", "d", "/", "q", " " }) do
+      assert(panel_keys[key], "tag panel is missing action mapping: " .. key)
+    end
+    local tag_panel_width = vim.api.nvim_win_get_width(tag_panel_state.popup.winid)
+    for _, line in ipairs(vim.api.nvim_buf_get_lines(tag_panel_state.popup.bufnr, 0, -1, false)) do
+      assert(vim.fn.strdisplaywidth(line) <= tag_panel_width, "tag panel line exceeds its width: " .. line)
+    end
+    tag_panel_state.toggle_current()
+    assert(
+      vim.wait(100, function()
+        return vim.deep_equal(form_state.state:get("tags"), { "existing" })
+      end),
+      "tag panel did not select the focused tag"
+    )
+    tag_panel_state.toggle_current()
+    assert(
+      vim.wait(100, function()
+        return vim.deep_equal(form_state.state:get("tags"), {})
+      end),
+      "tag panel did not deselect the focused tag"
+    )
+    tag_panel.close()
+    vim.wait(20)
+    vim.api.nvim_buf_set_lines(form_state.components.tag_input.bufnr, 0, -1, false, { "fresh" })
+    vim.api.nvim_win_set_cursor(form_state.components.tag_input.winid, { 1, 5 })
+    vim.wait(20)
+    vim.bo[form_state.components.tag_input.bufnr].modifiable = false
+    form_state.commit_tag()
+    assert(
+      vim.wait(100, function()
+        return vim.deep_equal(form_state.state:get("tags"), { "fresh" })
+          and vim.bo[form_state.components.tag_input.bufnr].modifiable
+      end),
+      "typing and committing a tag did not update the structured form: "
+        .. vim.inspect({
+          tags = form_state.state:get("tags"),
+          input = vim.api.nvim_buf_get_lines(form_state.components.tag_input.bufnr, 0, -1, false),
+        })
+    )
+    vim.api.nvim_set_current_win(form_state.components.description.winid)
+    vim.api.nvim_buf_set_lines(form_state.components.description.bufnr, 0, -1, false, { "first line", "second line" })
+    vim.api.nvim_exec_autocmds("TextChanged", { buffer = form_state.components.description.bufnr })
+    assert(
+      vim.wait(100, function()
+        return form_state.state:get("description") == "first line\nsecond line"
+      end),
+      "multi-line description input did not preserve newlines"
+    )
+    form.close(true)
+    eq(form.inspect_state(), nil)
+    assert(vim.wait(100, function()
+      return close_reason ~= nil
+    end))
+    eq(close_reason, "forced")
+    package.loaded.todo = nil
+  end)
+else
+  skip("NUI dashboard and form", "nui.nvim is not on runtimepath")
+end
 
 local sqlite_ok = pcall(require, "sqlite.db")
 if sqlite_ok then
@@ -209,6 +513,7 @@ if sqlite_ok then
     local store = require("todo.store").open(path)
     local service = require("todo.service").new(store)
     eq(store:list({ archived = false }), {})
+    eq(service:stats(), { active = 0, emergency = 0, archived = 0 })
     local created = assert(service:create({
       title = "Persist",
       description = "db",
@@ -218,6 +523,17 @@ if sqlite_ok then
       tags = { "SQLite", "nvim" },
     }))
     eq(store:get(created.id).tags, { "nvim", "SQLite" })
+    eq(service:list_tags(), { "nvim", "SQLite" })
+    eq(service:tag_stats(), {
+      { name = "nvim", task_count = 1 },
+      { name = "SQLite", task_count = 1 },
+    })
+    eq(service:create_tag("merged"), "merged")
+    eq(service:rename_tag("SQLite", "merged"), "merged")
+    eq(store:get(created.id).tags, { "merged", "nvim" })
+    assert(service:delete_tag("merged"))
+    eq(store:get(created.id).tags, { "nvim" })
+    eq(service:stats(), { active = 1, emergency = 1, archived = 0 })
     assert(service:set_status(created.id, "done"))
     assert(service:archive(created.id))
     eq(#store:list({ archived = true }), 1)
@@ -233,6 +549,13 @@ if sqlite_ok then
       tags = {},
     }))
     eq(updated.due_date, nil)
+    local disposable = assert(service:create({ title = "Delete me", priority = "P3", tags = { "temporary" } }))
+    local active_delete, active_delete_error = service:delete_archived(disposable.id)
+    eq(active_delete, nil)
+    eq(active_delete_error, { archived = "required" })
+    assert(service:archive(disposable.id))
+    assert(service:delete_archived(disposable.id))
+    eq(store:get(disposable.id), nil)
     store:close()
     for _, suffix in ipairs({ "", "-wal", "-shm" }) do
       os.remove(path .. suffix)

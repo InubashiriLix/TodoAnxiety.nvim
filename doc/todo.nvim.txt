@@ -14,8 +14,9 @@ CONTENTS                                                        *todo-contents*
 1. INTRODUCTION                                                   *todo-intro*
 
 todo.nvim manages personal tasks in one local SQLite database. It provides a
-floating panel and a sidebar with the same views and actions. Neovim 0.10+,
-kkharji/sqlite.lua, and a system SQLite shared library are required.
+responsive floating dashboard and a sidebar with the same views and actions.
+Neovim 0.10+, kkharji/sqlite.lua, MunifTanjim/nui.nvim, and a system SQLite
+shared library are required.
 
 Use |:checkhealth| todo to diagnose the installation.
 
@@ -37,7 +38,7 @@ Use |:checkhealth| todo to diagnose the installation.
 <
 
 The public Lua API consists of setup(), open(opts), toggle(opts), add(opts),
-and close(). Database internals are not public API.
+tags(), and close(). Database internals are not public API.
 
 ==============================================================================
 3. COMMANDS                                                     *todo-commands*
@@ -52,6 +53,10 @@ and close(). Database internals are not public API.
 :Todo add [title]
         Open the task form with an optional prefilled title.
 
+:Todo tags
+        Open the tag manager. Create, rename, delete, filter, and inspect tag
+        usage counts from one panel.
+
 :Todo edit [id]
 :Todo start [id]
 :Todo done [id]
@@ -60,7 +65,11 @@ and close(). Database internals are not public API.
 :Todo archive [id]
 :Todo restore [id]
         Operate on a task. In a todo panel, a missing ID means the task under
-        the cursor. Archive is reversible; there is no permanent delete.
+        the cursor. Archive is reversible.
+
+:Todo delete [id]
+        Permanently delete an archived task. Active tasks are rejected. This
+        operation cannot be undone.
 
 :Todo close
         Close the current panel.
@@ -75,17 +84,42 @@ Global defaults (all configurable or disableable):
   <leader>Tf   open the floating panel
   <leader>Ts   open the sidebar
   <leader>Te   open the emergency view
+  <leader>Tg   manage tags
 
 Existing mappings are not overwritten. Panel-local mappings:
 
   j/k          move                    <CR>   show details
   a/e          add/edit                s      start
   x/c/u        done/cancel/reopen      A/R    archive/restore
+  D            permanently delete the selected archived task (with confirm)
   /            search                  f      filter
+  g            manage tags
   v            choose view             r      refresh
   ?            help                    q      close
 
-The form uses CTRL-S to save and Escape or q in Normal mode to cancel.
+The form uses CTRL-S to save, q in Normal mode to close, and CTRL-Q to close
+from either mode. Escape only exits Insert mode and never closes the form.
+
+The dashboard shows two-line task cards. At 100 or more available columns, the
+floating view adds a fixed detail pane; narrow layouts open details with Enter.
+Active tasks are grouped by status. Use [ and ] to change views and h/l to move
+between the list and details in a wide dashboard.
+
+The task form has separate title, priority, status, deadline, tag, and
+description controls. Tab and Shift-Tab move focus. Deadline selection opens a
+calendar with hjkl day movement, [/]/PageUp/PageDown month movement, Enter to
+choose, g for today, t for the unrestricted time editor, and x to clear. In the
+time editor, type HHMM directly; h/l changes fields, j/k adjusts by one, and J/K
+adjusts by five. Press Enter on an empty tag field to open the tag panel. It
+supports j/k movement, selection with Enter/Space, creation with a, rename with
+r, deletion with d, and filtering with /. The same manager is available through
+|:Todo| tags. todo.nvim registers no mouse mappings.
+The priority control shows P0 through P3 directly; use 0-3, Left/Right, or
+Enter to choose it. Status works the same way with 1-4. Emergency rank
+itself is calculated from priority and deadline rather than entered manually.
+Closing a modified form prompts to save, discard, or continue editing.
+Opening a form from a dashboard suspends that dashboard and restores its view,
+filters, and selection after the form closes.
 
 ==============================================================================
 5. EMERGENCY RANKING                                           *todo-emergency*
@@ -108,8 +142,9 @@ The default database is stdpath("data")/todo.nvim/todo.db. It contains tasks,
 tags, task-tag links, and numbered schema migrations. Foreign keys, WAL, a busy
 timeout, and transactional migrations are enabled.
 
-Tasks may be archived and restored but are never permanently deleted by the
-plugin. The first release intentionally excludes reminders, recurrence,
-subtasks, synchronization, and project-specific databases.
+Tasks may be archived and restored. Archived tasks may also be permanently
+deleted with |:Todo| delete or D in the archived view. The first release
+intentionally excludes reminders, recurrence, subtasks, synchronization, and
+project-specific databases.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

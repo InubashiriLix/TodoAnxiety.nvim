@@ -19,6 +19,16 @@ function M.check()
     })
   end
 
+  local nui_ok, nui = pcall(require, "nui.popup")
+  if nui_ok then
+    vim.health.ok("MunifTanjim/nui.nvim is available")
+  else
+    vim.health.error("MunifTanjim/nui.nvim is missing", {
+      "Install https://github.com/MunifTanjim/nui.nvim with your plugin manager",
+      tostring(nui),
+    })
+  end
+
   local cfg_ok, cfg = pcall(function()
     return require("todo.config").get()
   end)
@@ -57,7 +67,7 @@ function M.check()
   end
 
   local prefix = cfg.keymaps.prefix
-  for _, suffix in ipairs({ "t", "a", "f", "s", "e" }) do
+  for _, suffix in ipairs({ "t", "a", "f", "s", "e", "g" }) do
     local lhs = prefix .. suffix
     local mapping = vim.fn.maparg(lhs, "n", false, true)
     if type(mapping) == "table" and mapping.lhs and mapping.lhs ~= "" then
