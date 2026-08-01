@@ -1,0 +1,115 @@
+*todo.nvim.txt*                 Local SQLite task management for Neovim
+
+==============================================================================
+CONTENTS                                                        *todo-contents*
+
+1. Introduction ............................................... |todo-intro|
+2. Setup ....................................................... |todo-setup|
+3. Commands .................................................. |todo-commands|
+4. Mappings .................................................. |todo-mappings|
+5. Emergency ranking ........................................ |todo-emergency|
+6. Data ........................................................ |todo-data|
+
+==============================================================================
+1. INTRODUCTION                                                   *todo-intro*
+
+todo.nvim manages personal tasks in one local SQLite database. It provides a
+floating panel and a sidebar with the same views and actions. Neovim 0.10+,
+kkharji/sqlite.lua, and a system SQLite shared library are required.
+
+Use |:checkhealth| todo to diagnose the installation.
+
+==============================================================================
+2. SETUP                                                           *todo-setup*
+
+>lua
+  require("todo").setup({
+    db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
+    language = "en", -- or "zh-CN"
+    ui = {
+      default_mode = "float",
+      default_view = "active",
+      float = { width = 0.80, height = 0.75, border = "rounded" },
+      sidebar = { width = 42, side = "right" },
+    },
+    keymaps = { enabled = true, prefix = "<leader>T" },
+  })
+<
+
+The public Lua API consists of setup(), open(opts), toggle(opts), add(opts),
+and close(). Database internals are not public API.
+
+==============================================================================
+3. COMMANDS                                                     *todo-commands*
+
+                                                             *:Todo*
+:Todo [open] [float|sidebar] [active|emergency|archived]
+        Open a task view. With no arguments, use configured defaults.
+
+:Todo toggle [float|sidebar]
+        Toggle the panel.
+
+:Todo add [title]
+        Open the task form with an optional prefilled title.
+
+:Todo edit [id]
+:Todo start [id]
+:Todo done [id]
+:Todo cancel [id]
+:Todo reopen [id]
+:Todo archive [id]
+:Todo restore [id]
+        Operate on a task. In a todo panel, a missing ID means the task under
+        the cursor. Archive is reversible; there is no permanent delete.
+
+:Todo close
+        Close the current panel.
+
+==============================================================================
+4. MAPPINGS                                                     *todo-mappings*
+
+Global defaults (all configurable or disableable):
+
+  <leader>Tt   toggle the default panel
+  <leader>Ta   add a task
+  <leader>Tf   open the floating panel
+  <leader>Ts   open the sidebar
+  <leader>Te   open the emergency view
+
+Existing mappings are not overwritten. Panel-local mappings:
+
+  j/k          move                    <CR>   show details
+  a/e          add/edit                s      start
+  x/c/u        done/cancel/reopen      A/R    archive/restore
+  /            search                  f      filter
+  v            choose view             r      refresh
+  ?            help                    q      close
+
+The form uses CTRL-S to save and Escape or q in Normal mode to cancel.
+
+==============================================================================
+5. EMERGENCY RANKING                                           *todo-emergency*
+
+Candidates are unarchived todo/in_progress tasks with a deadline, plus P0/P1
+tasks without a deadline.
+
+  Deadline: overdue 120, <=24h 80, <=3d 60, <=7d 40, later 20, none 0
+  Priority: P0 +30, P1 +20, P2 +10, P3 +0
+
+Sort by score descending, then deadline presence, earlier deadline, priority,
+and creation time. The UI displays a level and reason rather than the score.
+Dates use local time and accept YYYY-MM-DD or YYYY-MM-DD HH:mm. Date-only
+deadlines end at 23:59:59.
+
+==============================================================================
+6. DATA                                                           *todo-data*
+
+The default database is stdpath("data")/todo.nvim/todo.db. It contains tasks,
+tags, task-tag links, and numbered schema migrations. Foreign keys, WAL, a busy
+timeout, and transactional migrations are enabled.
+
+Tasks may be archived and restored but are never permanently deleted by the
+plugin. The first release intentionally excludes reminders, recurrence,
+subtasks, synchronization, and project-specific databases.
+
+vim:tw=78:ts=8:noet:ft=help:norl:
