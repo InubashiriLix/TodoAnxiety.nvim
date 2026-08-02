@@ -7,6 +7,10 @@ task forms, and SQLite persistence. Tasks can be ranked by a transparent
 combination of deadline and priority, so the emergency view answers “what
 should I do next?”
 
+
+https://github.com/user-attachments/assets/2d69b477-6317-413d-8381-6ce3469251cc
+
+
 ## Requirements
 
 - Neovim 0.10+
