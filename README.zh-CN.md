@@ -5,7 +5,7 @@
 一个专注、本地优先的 Neovim 任务管理插件，提供响应式 dashboard、结构化
 任务表单和 SQLite 持久化。插件根据截止时间和优先级透明地计算任务紧急程度，
 让紧急视图直接回答“接下来应该做什么？”
-
+https://github.com/user-attachments/assets/2d69b477-6317-413d-8381-6ce3469251cc
 ## 环境要求
 
 - Neovim 0.10+
