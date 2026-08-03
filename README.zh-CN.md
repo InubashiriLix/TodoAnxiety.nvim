@@ -26,6 +26,8 @@
 - Neovim 0.10+
 - [`kkharji/sqlite.lua`](https://github.com/kkharji/sqlite.lua)
 - [`MunifTanjim/nui.nvim`](https://github.com/MunifTanjim/nui.nvim)
+- [`folke/which-key.nvim`](https://github.com/folke/which-key.nvim) v3（可选，
+  用于独立的快捷键图标列）
 - 系统 SQLite 动态库：`libsqlite3.so`、`libsqlite3.dylib` 或 `sqlite3.dll`
 
 lazy.nvim 安装示例：
@@ -139,18 +141,22 @@ require("todo").setup({
     open_emergency = "<leader>Te",
     manage_tags = "<leader>Tg",
   },
-  -- 图标会显示在 :map 和 :checkhealth 的按键描述中
-  -- 设为 "" 移除，或使用任意 UTF‑8 字符（如 nerdfont 图标）
+  -- 可选的 which-key v3 原生图标元数据；
+  -- 也可直接填写字符串；使用 false 或 "" 禁用某一个图标
   icons = {
-    toggle = "\u{25CF}",
-    add = "+",
-    open_float = "\u{25A1}",
-    open_sidebar = "\u{25A3}",
-    open_emergency = "\u{26A0}",
-    manage_tags = "\u{2691}",
+    toggle = { icon = "\u{f204}", color = "yellow" },
+    add = { icon = "\u{f067}", color = "green" },
+    open_float = { icon = "\u{eb7f}", color = "blue" },
+    open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
+    open_emergency = { icon = "\u{f071}", color = "orange" },
+    manage_tags = { icon = "\u{f02c}", color = "purple" },
   },
 })
 ```
+
+检测到 which-key v3 时，todo.nvim 会通过 `which-key.add()` 把以上配置作为原生
+`icon` 元数据注册。which-key 会将它们渲染在独立、对齐且带颜色的图标列中。
+没有安装 which-key 时，快捷键仍然正常工作，`desc` 也会保持为不含图标的纯文本。
 
 插件使用单个全局数据库，不会为不同代码项目分别创建数据库。备份数据库时，
 可以先关闭 Neovim 再复制配置中的 `.db` 文件；数据库正在使用时则应使用

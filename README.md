@@ -27,6 +27,8 @@ should I do next?”
 - Neovim 0.10+
 - [`kkharji/sqlite.lua`](https://github.com/kkharji/sqlite.lua)
 - [`MunifTanjim/nui.nvim`](https://github.com/MunifTanjim/nui.nvim)
+- [`folke/which-key.nvim`](https://github.com/folke/which-key.nvim) v3 (optional,
+  for the dedicated keymap icon column)
 - A system SQLite shared library (`libsqlite3.so`, `libsqlite3.dylib`, or
   `sqlite3.dll`)
 
@@ -145,18 +147,23 @@ require("todo").setup({
     open_emergency = "<leader>Te",
     manage_tags = "<leader>Tg",
   },
-  -- Icons prepended to the mapping description shown by :map and :checkhealth.
-  -- Set to "" to remove, or use any UTF‑8 string (e.g. nerdfont glyphs).
+  -- Optional which-key v3 icon metadata.
+  -- A plain string is also accepted; use false or "" to disable one icon.
   icons = {
-    toggle = "\u{25CF}",
-    add = "+",
-    open_float = "\u{25A1}",
-    open_sidebar = "\u{25A3}",
-    open_emergency = "\u{26A0}",
-    manage_tags = "\u{2691}",
+    toggle = { icon = "\u{f204}", color = "yellow" },
+    add = { icon = "\u{f067}", color = "green" },
+    open_float = { icon = "\u{eb7f}", color = "blue" },
+    open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
+    open_emergency = { icon = "\u{f071}", color = "orange" },
+    manage_tags = { icon = "\u{f02c}", color = "purple" },
   },
 })
 ```
+
+When which-key v3 is available, todo.nvim passes these values through
+`which-key.add()` as native `icon` metadata. The popup therefore renders a
+separate, aligned, color-highlighted icon column. Without which-key, the
+mappings still work and their descriptions remain clean text.
 
 The plugin stores one global database rather than one database per project.
 Back up the configured `.db` file after closing Neovim, or use SQLite's backup

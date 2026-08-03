@@ -42,15 +42,19 @@ Use |:checkhealth| todo to diagnose the installation.
       manage_tags = "<leader>Tg",
     },
     icons = {
-      toggle = "\u{25CF}",
-      add = "+",
-      open_float = "\u{25A1}",
-      open_sidebar = "\u{25A3}",
-      open_emergency = "\u{26A0}",
-      manage_tags = "\u{2691}",
+      toggle = { icon = "\u{f204}", color = "yellow" },
+      add = { icon = "\u{f067}", color = "green" },
+      open_float = { icon = "\u{eb7f}", color = "blue" },
+      open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
+      open_emergency = { icon = "\u{f071}", color = "orange" },
+      manage_tags = { icon = "\u{f02c}", color = "purple" },
     },
   })
 <
+
+The icons table is optional which-key.nvim v3 metadata. todo.nvim registers it
+with which-key.add(), producing a separate icon column; icons are not prepended
+to mapping descriptions. Strings and { icon, color } tables are accepted.
 
 The public Lua API consists of setup(), open(opts), toggle(opts), add(opts),
 tags(), and close(). Database internals are not public API.

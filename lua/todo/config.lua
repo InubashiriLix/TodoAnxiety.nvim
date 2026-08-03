@@ -18,12 +18,12 @@ local defaults = {
     manage_tags = "<leader>Tg",
   },
   icons = {
-    toggle = "\u{25CF}",
-    add = "+",
-    open_float = "\u{25A1}",
-    open_sidebar = "\u{25A3}",
-    open_emergency = "\u{26A0}",
-    manage_tags = "\u{2691}",
+    toggle = { icon = "\u{f204}", color = "yellow" },
+    add = { icon = "\u{f067}", color = "green" },
+    open_float = { icon = "\u{eb7f}", color = "blue" },
+    open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
+    open_emergency = { icon = "\u{f071}", color = "orange" },
+    manage_tags = { icon = "\u{f02c}", color = "purple" },
   },
 }
 
@@ -91,12 +91,35 @@ local function validate(opts)
   })
   for name, key in pairs(opts.keymaps) do
     if key == false then
-      goto continue
+      goto keymap_continue
     end
     if type(key) ~= "string" or key == "" then
       error("keymaps." .. name .. " must be a non-empty string or false")
     end
-    ::continue::
+    ::keymap_continue::
+  end
+  local colors = {
+    azure = true,
+    blue = true,
+    cyan = true,
+    green = true,
+    grey = true,
+    orange = true,
+    purple = true,
+    red = true,
+    yellow = true,
+  }
+  for name, icon in pairs(opts.icons) do
+    if icon == false or type(icon) == "string" then
+      goto icon_continue
+    end
+    if type(icon) ~= "table" or type(icon.icon) ~= "string" or icon.icon == "" then
+      error("icons." .. name .. " must be a string, false, or a which-key icon table")
+    end
+    if icon.color ~= nil and not colors[icon.color] then
+      error("icons." .. name .. ".color is not a supported which-key color")
+    end
+    ::icon_continue::
   end
 end
 
