@@ -90,9 +90,13 @@ local function validate(opts)
     },
   })
   for name, key in pairs(opts.keymaps) do
-    if key ~= false and type(key) ~= "string" then
-      error("keymaps." .. name .. " must be a string or false")
+    if key == false then
+      goto continue
     end
+    if type(key) ~= "string" or key == "" then
+      error("keymaps." .. name .. " must be a non-empty string or false")
+    end
+    ::continue::
   end
 end
 
