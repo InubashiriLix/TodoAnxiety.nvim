@@ -34,24 +34,20 @@ Use |:checkhealth| todo to diagnose the installation.
       sidebar = { width = 42, side = "right" },
     },
     keymaps = {
-      enabled = true,
-      prefix = "<leader>T",
-      mappings = {
-        toggle = "t",
-        add = "a",
-        open_float = "f",
-        open_sidebar = "s",
-        open_emergency = "e",
-        manage_tags = "g",
-      },
-      icons = {
-        toggle = "\u{25CF}",
-        add = "+",
-        open_float = "\u{25A1}",
-        open_sidebar = "\u{25A3}",
-        open_emergency = "\u{26A0}",
-        manage_tags = "\u{2691}",
-      },
+      toggle = "<leader>Tt",
+      add = "<leader>Ta",
+      open_float = "<leader>Tf",
+      open_sidebar = "<leader>Ts",
+      open_emergency = "<leader>Te",
+      manage_tags = "<leader>Tg",
+    },
+    icons = {
+      toggle = "\u{25CF}",
+      add = "+",
+      open_float = "\u{25A1}",
+      open_sidebar = "\u{25A3}",
+      open_emergency = "\u{26A0}",
+      manage_tags = "\u{2691}",
     },
   })
 <
@@ -98,12 +94,9 @@ tags(), and close(). Database internals are not public API.
 
 Global defaults (all configurable or disableable):
 
-  <leader>Tt   toggle the default panel
-  <leader>Ta   add a task
-  <leader>Tf   open the floating panel
-  <leader>Ts   open the sidebar
-  <leader>Te   open the emergency view
-  <leader>Tg   manage tags
+  <leader>Tt   toggle dashboard            <leader>Ta   add task
+  <leader>Tf   open floating panel         <leader>Ts   open sidebar
+  <leader>Te   open emergency view         <leader>Tg   manage tags
 
 Existing mappings are not overwritten. Panel-local mappings:
 

@@ -136,28 +136,24 @@ require("todo").setup({
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
+  -- Each entry is the full key string, or false to disable.
   keymaps = {
-    enabled = true,
-    prefix = "<leader>T",
-    -- Customize individual mappings (string) or disable them (false).
-    mappings = {
-      toggle = "t",
-      add = "a",
-      open_float = "f",
-      open_sidebar = "s",
-      open_emergency = "e",
-      manage_tags = "g",
-    },
-    -- Icons are prepended to the mapping description shown by :map and :checkhealth.
-    -- Set to "" to remove an icon, or use any UTF‑8 string (e.g. nerdfont glyphs).
-    icons = {
-      toggle = "●",
-      add = "+",
-      open_float = "□",
-      open_sidebar = "▣",
-      open_emergency = "⚠",
-      manage_tags = "⚑",
-    },
+    toggle = "<leader>Tt",
+    add = "<leader>Ta",
+    open_float = "<leader>Tf",
+    open_sidebar = "<leader>Ts",
+    open_emergency = "<leader>Te",
+    manage_tags = "<leader>Tg",
+  },
+  -- Icons prepended to the mapping description shown by :map and :checkhealth.
+  -- Set to "" to remove, or use any UTF‑8 string (e.g. nerdfont glyphs).
+  icons = {
+    toggle = "\u{25CF}",
+    add = "+",
+    open_float = "\u{25A1}",
+    open_sidebar = "\u{25A3}",
+    open_emergency = "\u{26A0}",
+    manage_tags = "\u{2691}",
   },
 })
 ```

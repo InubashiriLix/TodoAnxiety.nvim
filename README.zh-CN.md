@@ -130,28 +130,24 @@ require("todo").setup({
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
+  -- 每个值是一个完整的按键串，设为 false 则禁用
   keymaps = {
-    enabled = true,
-    prefix = "<leader>T",
-    -- 自定义单个快捷键 (string) 或禁用它 (false)
-    mappings = {
-      toggle = "t",
-      add = "a",
-      open_float = "f",
-      open_sidebar = "s",
-      open_emergency = "e",
-      manage_tags = "g",
-    },
-    -- 图标会显示在 :map 和 :checkhealth 的按键描述中
-    -- 设为 "" 移除图标，或使用任意 UTF‑8 字符（比如 nerdfont 图标）
-    icons = {
-      toggle = "●",
-      add = "+",
-      open_float = "□",
-      open_sidebar = "▣",
-      open_emergency = "⚠",
-      manage_tags = "⚑",
-    },
+    toggle = "<leader>Tt",
+    add = "<leader>Ta",
+    open_float = "<leader>Tf",
+    open_sidebar = "<leader>Ts",
+    open_emergency = "<leader>Te",
+    manage_tags = "<leader>Tg",
+  },
+  -- 图标会显示在 :map 和 :checkhealth 的按键描述中
+  -- 设为 "" 移除，或使用任意 UTF‑8 字符（如 nerdfont 图标）
+  icons = {
+    toggle = "\u{25CF}",
+    add = "+",
+    open_float = "\u{25A1}",
+    open_sidebar = "\u{25A3}",
+    open_emergency = "\u{26A0}",
+    manage_tags = "\u{2691}",
   },
 })
 ```

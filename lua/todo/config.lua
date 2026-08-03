@@ -10,24 +10,20 @@ local defaults = {
     sidebar = { width = 42, side = "right" },
   },
   keymaps = {
-    enabled = true,
-    prefix = "<leader>T",
-    mappings = {
-      toggle = "t",
-      add = "a",
-      open_float = "f",
-      open_sidebar = "s",
-      open_emergency = "e",
-      manage_tags = "g",
-    },
-    icons = {
-      toggle = "\u{25CF}",
-      add = "+",
-      open_float = "\u{25A1}",
-      open_sidebar = "\u{25A3}",
-      open_emergency = "\u{26A0}",
-      manage_tags = "\u{2691}",
-    },
+    toggle = "<leader>Tt",
+    add = "<leader>Ta",
+    open_float = "<leader>Tf",
+    open_sidebar = "<leader>Ts",
+    open_emergency = "<leader>Te",
+    manage_tags = "<leader>Tg",
+  },
+  icons = {
+    toggle = "\u{25CF}",
+    add = "+",
+    open_float = "\u{25A1}",
+    open_sidebar = "\u{25A3}",
+    open_emergency = "\u{26A0}",
+    manage_tags = "\u{2691}",
   },
 }
 
@@ -44,27 +40,22 @@ local function validate(opts)
       "'en' or 'zh-CN'",
     },
     ui = { opts.ui, "table" },
-    keymaps = { opts.keymaps, "table" },
-  })
-  vim.validate({
-    default_mode = {
+    ui_default_mode = {
       opts.ui.default_mode,
       function(v)
         return v == "float" or v == "sidebar"
       end,
       "'float' or 'sidebar'",
     },
-    default_view = {
+    ui_default_view = {
       opts.ui.default_view,
       function(v)
         return v == "active" or v == "emergency" or v == "archived"
       end,
-      "valid todo view",
+      "'active', 'emergency', or 'archived'",
     },
-    keymaps_enabled = { opts.keymaps.enabled, "boolean" },
-    keymaps_prefix = { opts.keymaps.prefix, "string" },
-    keymaps_mappings = { opts.keymaps.mappings, "table" },
-    keymaps_icons = { opts.keymaps.icons, "table" },
+    keymaps = { opts.keymaps, "table" },
+    icons = { opts.icons, "table" },
     float = { opts.ui.float, "table" },
     sidebar = { opts.ui.sidebar, "table" },
   })
@@ -98,10 +89,9 @@ local function validate(opts)
       "'left' or 'right'",
     },
   })
-  assert(opts.keymaps.prefix ~= "", "keymaps.prefix must not be empty")
-  for name, key in pairs(opts.keymaps.mappings) do
+  for name, key in pairs(opts.keymaps) do
     if key ~= false and type(key) ~= "string" then
-      error("keymaps.mappings." .. name .. " must be a string or false")
+      error("keymaps." .. name .. " must be a string or false")
     end
   end
 end
