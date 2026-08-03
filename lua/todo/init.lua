@@ -21,6 +21,31 @@ local function map_is_ours(lhs)
   return type(mapping) == "table" and type(mapping.desc) == "string" and vim.startswith(mapping.desc, "todo.nvim:")
 end
 
+local function register_which_key(definitions)
+  local ok, which_key = pcall(require, "which-key")
+  if not ok or type(which_key.add) ~= "function" then
+    return
+  end
+  local specs = {}
+  for _, definition in ipairs(definitions) do
+    local lhs, icon = definition[1], definition[4]
+    if lhs ~= false and icon ~= false and icon ~= "" and map_is_ours(lhs) then
+      local registered_lhs = lhs
+      specs[#specs + 1] = {
+        lhs,
+        mode = "n",
+        icon = icon,
+        cond = function()
+          return map_is_ours(registered_lhs)
+        end,
+      }
+    end
+  end
+  if #specs > 0 then
+    which_key.add(specs)
+  end
+end
+
 local function register_keymaps()
   for _, lhs in ipairs(registered_maps) do
     if map_is_ours(lhs) then
@@ -86,11 +111,7 @@ local function register_keymaps()
       goto continue
     end
     if vim.fn.maparg(lhs, "n") == "" then
-      local desc = "todo.nvim: " .. definition[3]
-      if definition[4] ~= "" then
-        desc = "todo.nvim: " .. definition[4] .. " " .. definition[3]
-      end
-      vim.keymap.set("n", lhs, definition[2], { silent = true, desc = desc })
+      vim.keymap.set("n", lhs, definition[2], { silent = true, desc = "todo.nvim: " .. definition[3] })
       registered_maps[#registered_maps + 1] = lhs
     else
       vim.schedule(function()
@@ -99,6 +120,7 @@ local function register_keymaps()
     end
     ::continue::
   end
+  register_which_key(definitions)
 end
 
 function M.setup(opts)

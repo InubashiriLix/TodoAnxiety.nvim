@@ -48,7 +48,7 @@ test("keymaps accept full key strings and false", function()
       manage_tags = "<leader>tg",
     },
     icons = {
-      toggle = "!",
+      toggle = { icon = "!", color = "red" },
       add = "",
     },
   })
@@ -59,15 +59,24 @@ test("keymaps accept full key strings and false", function()
   eq(km.open_float, "<leader>Tf", "missing keys keep defaults")
   eq(km.open_sidebar, "<leader>Ts")
   eq(km.open_emergency, "<leader>Te")
-  eq(config.get().icons.toggle, "!")
+  eq(config.get().icons.toggle, { icon = "!", color = "red" })
   eq(config.get().icons.add, "")
 end)
 
 test("keymaps: register, disable, and cleanup across re-configurations", function()
   local config = require("todo.config")
+  local which_key_specs = {}
+  package.loaded["which-key"] = {
+    add = function(specs)
+      which_key_specs[#which_key_specs + 1] = specs
+    end,
+  }
   config.setup({
     keymaps = { toggle = "<C-x>", add = "<C-a>" },
-    icons = { toggle = "✦", add = "✚" },
+    icons = {
+      toggle = { icon = "✦", color = "yellow" },
+      add = { icon = "✚", color = "green" },
+    },
   })
 
   local M = require("todo")
@@ -83,9 +92,16 @@ test("keymaps: register, disable, and cleanup across re-configurations", functio
   end
 
   assert(registered("<C-x>"), "<C-x> should be mapped")
-  assert(desc("<C-x>"):find("✦ toggle"), "icon in desc: " .. desc("<C-x>"))
+  eq(desc("<C-x>"), "todo.nvim: toggle")
   assert(registered("<C-a>"), "<C-a> should be mapped")
-  assert(desc("<C-a>"):find("✚ add"), "icon in desc: " .. desc("<C-a>"))
+  eq(desc("<C-a>"), "todo.nvim: add task")
+  local specs = which_key_specs[#which_key_specs]
+  local by_lhs = {}
+  for _, spec in ipairs(specs) do
+    by_lhs[spec[1]] = spec
+  end
+  eq(by_lhs["<C-x>"].icon, { icon = "✦", color = "yellow" })
+  eq(by_lhs["<C-a>"].icon, { icon = "✚", color = "green" })
 
   -- Reconfigure without add -> old maps should be cleaned up
   config.setup({ keymaps = { toggle = "<C-y>", add = false } })
@@ -94,6 +110,7 @@ test("keymaps: register, disable, and cleanup across re-configurations", functio
   assert(registered("<C-y>"), "<C-y> should be mapped after reconfig")
   assert(not registered("<C-x>"), "<C-x> should be cleaned up")
   assert(not registered("<C-a>"), "<C-a> should be cleaned up when disabled")
+  package.loaded["which-key"] = nil
 end)
 
 test("keymaps: reject non-string, non-false values", function()
@@ -130,7 +147,16 @@ test("keymaps: icons missing from config fall back to defaults", function()
   local config = require("todo.config")
   config.setup({ icons = { toggle = "X" } })
   eq(config.get().icons.toggle, "X")
-  eq(config.get().icons.add, "+")
+  eq(config.get().icons.add, { icon = "\u{f067}", color = "green" })
+end)
+
+test("keymaps: validate which-key icon specs", function()
+  local config = require("todo.config")
+  eq(pcall(config.setup, { icons = { toggle = { icon = "X", color = "red" } } }), true)
+  eq(pcall(config.setup, { icons = { toggle = { icon = "X", color = "pink" } } }), false)
+  eq(pcall(config.setup, { icons = { toggle = { color = "red" } } }), true)
+  eq(config.get().icons.toggle, { icon = "\u{f204}", color = "red" })
+  eq(pcall(config.setup, { icons = { toggle = false } }), true)
 end)
 
 test("keymaps: health check iterates over configured keymaps", function()
