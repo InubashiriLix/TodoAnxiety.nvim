@@ -1,5 +1,8 @@
 # todo.nvim
 
+![Neovim](https://img.shields.io/badge/Neovim-0.10%2B-blue?logo=neovim)
+![License](https://img.shields.io/badge/license-WTFPL-blue)
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 A focused, local task manager for Neovim with a responsive dashboard, structured
@@ -7,9 +10,17 @@ task forms, and SQLite persistence. Tasks can be ranked by a transparent
 combination of deadline and priority, so the emergency view answers “what
 should I do next?”
 
+<https://github.com/user-attachments/assets/2d69b477-6317-413d-8381-6ce3469251cc>
 
-https://github.com/user-attachments/assets/2d69b477-6317-413d-8381-6ce3469251cc
+## Contents
 
+- [Requirements](#requirements)
+- [Usage](#usage)
+- [Dashboard and form](#dashboard-and-form)
+- [Configuration](#configuration)
+- [Emergency ranking](#emergency-ranking)
+- [Data and lifecycle](#data-and-lifecycle)
+- [Development](#development)
 
 ## Requirements
 
