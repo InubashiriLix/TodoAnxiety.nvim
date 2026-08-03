@@ -42,6 +42,41 @@ local function owner_valid()
   return owner.layout ~= nil and owner.list.winid and vim.api.nvim_win_is_valid(owner.list.winid)
 end
 
+local function owner_has_window(owner, winid)
+  if not owner or not winid or not vim.api.nvim_win_is_valid(winid) then
+    return false
+  end
+  for _, name in ipairs({ "split", "header", "list", "footer", "detail", "detail_overlay", "transient" }) do
+    local component = owner[name]
+    if component and component.winid == winid then
+      return true
+    end
+  end
+  return false
+end
+
+local function tag_panel_has_window(winid)
+  local tag_panel = package.loaded["todo.ui.tag_panel"]
+  if type(tag_panel) ~= "table" or type(tag_panel.inspect_state) ~= "function" then
+    return false
+  end
+  local tag_owner = tag_panel.inspect_state()
+  if not tag_owner or tag_owner.closed then
+    return false
+  end
+  for _, name in ipairs({ "popup", "transient" }) do
+    local component = tag_owner[name]
+    if component and component.winid == winid then
+      return true
+    end
+  end
+  return false
+end
+
+local function todo_has_window(owner, winid)
+  return owner_has_window(owner, winid) or tag_panel_has_window(winid)
+end
+
 local function selected_task()
   for _, task in ipairs(state.tasks) do
     if task.id == state.selected_id then
@@ -617,6 +652,24 @@ local function open_search()
   })
   owner.transient = search
   search:mount()
+  vim.api.nvim_create_autocmd("WinLeave", {
+    buffer = search.bufnr,
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        if owner.closed or state.owner ~= owner or owner.transient ~= search then
+          return
+        end
+        local target_win = vim.api.nvim_get_current_win()
+        close_transient(owner)
+        if owner.mode == "float" and not owner_has_window(owner, target_win) then
+          M.close()
+        else
+          render()
+        end
+      end)
+    end,
+  })
 end
 
 local function show_help()
@@ -857,7 +910,7 @@ function M.open(opts)
   state.view = opts.view or config.get().ui.default_view
   state.filters = opts.filters or state.filters or {}
   state.selected_id = opts.selected_id or state.selected_id
-  local owner = { closed = false, transient = nil }
+  local owner = { closed = false, transient = nil, mode = state.mode }
   state.owner = owner
   if state.mode == "sidebar" then
     create_sidebar(owner)
@@ -880,6 +933,22 @@ function M.open(opts)
           M.open(reopen)
         end)
       end
+    end,
+  })
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = owner.resize_group,
+    callback = function()
+      if owner.mode ~= "float" then
+        return
+      end
+      vim.schedule(function()
+        if owner.closed or state.owner ~= owner then
+          return
+        end
+        if not todo_has_window(owner, vim.api.nvim_get_current_win()) then
+          M.close()
+        end
+      end)
     end,
   })
 end
