@@ -12,6 +12,22 @@ local defaults = {
   keymaps = {
     enabled = true,
     prefix = "<leader>T",
+    mappings = {
+      toggle = "t",
+      add = "a",
+      open_float = "f",
+      open_sidebar = "s",
+      open_emergency = "e",
+      manage_tags = "g",
+    },
+    icons = {
+      toggle = "\u{25CF}",
+      add = "+",
+      open_float = "\u{25A1}",
+      open_sidebar = "\u{25A3}",
+      open_emergency = "\u{26A0}",
+      manage_tags = "\u{2691}",
+    },
   },
 }
 
@@ -47,6 +63,8 @@ local function validate(opts)
     },
     keymaps_enabled = { opts.keymaps.enabled, "boolean" },
     keymaps_prefix = { opts.keymaps.prefix, "string" },
+    keymaps_mappings = { opts.keymaps.mappings, "table" },
+    keymaps_icons = { opts.keymaps.icons, "table" },
     float = { opts.ui.float, "table" },
     sidebar = { opts.ui.sidebar, "table" },
   })
@@ -81,6 +99,11 @@ local function validate(opts)
     },
   })
   assert(opts.keymaps.prefix ~= "", "keymaps.prefix must not be empty")
+  for name, key in pairs(opts.keymaps.mappings) do
+    if key ~= false and type(key) ~= "string" then
+      error("keymaps.mappings." .. name .. " must be a string or false")
+    end
+  end
 end
 
 function M.setup(opts)
