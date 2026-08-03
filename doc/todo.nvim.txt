@@ -40,6 +40,7 @@ Use |:checkhealth| todo to diagnose the installation.
       open_sidebar = "<leader>Ts",
       open_emergency = "<leader>Te",
       manage_tags = "<leader>Tg",
+      add_notice = "<leader>Tn",
     },
     icons = {
       toggle = { icon = "\u{f204}", color = "yellow" },
@@ -48,6 +49,14 @@ Use |:checkhealth| todo to diagnose the installation.
       open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
       open_emergency = { icon = "\u{f071}", color = "orange" },
       manage_tags = { icon = "\u{f02c}", color = "purple" },
+      add_notice = { icon = "\u{f0f3}", color = "orange" },
+    },
+    reminders = {
+      enabled = true,
+      sound = {
+        path = "/path/to/reminder.ogg",
+        command = { "mpv", "--no-video", "--really-quiet" },
+      },
     },
   })
 <
@@ -57,13 +66,13 @@ with which-key.add(), producing a separate icon column; icons are not prepended
 to mapping descriptions. Strings and { icon, color } tables are accepted.
 
 The public Lua API consists of setup(), open(opts), toggle(opts), add(opts),
-tags(), and close(). Database internals are not public API.
+notice(opts), tags(), and close(). Database internals are not public API.
 
 ==============================================================================
 3. COMMANDS                                                     *todo-commands*
 
                                                              *:Todo*
-:Todo [open] [float|sidebar] [active|emergency|archived]
+:Todo [open] [float|sidebar] [active|emergency|notices|archived]
         Open a task view. With no arguments, use configured defaults.
 
 :Todo toggle [float|sidebar]
@@ -71,6 +80,10 @@ tags(), and close(). Database internals are not public API.
 
 :Todo add [title]
         Open the task form with an optional prefilled title.
+
+:Todo notice [title]
+        Open the notice form. Relative triggers such as 30s, 5m, 2h, and 1d
+        are accepted, as are exact local dates and times.
 
 :Todo tags
         Open the tag manager. Create, rename, delete, filter, and inspect tag
@@ -101,11 +114,12 @@ Global defaults (all configurable or disableable):
   <leader>Tt   toggle dashboard            <leader>Ta   add task
   <leader>Tf   open floating panel         <leader>Ts   open sidebar
   <leader>Te   open emergency view         <leader>Tg   manage tags
+  <leader>Tn   add notice
 
 Existing mappings are not overwritten. Panel-local mappings:
 
   j/k          move                    <CR>   show details
-  a/e          add/edit                s      start
+  a/n/e        add task/notice/edit    s      start
   x/c/u        done/cancel/reopen      A/R    archive/restore
   D            permanently delete the selected archived task (with confirm)
   /            search                  f      filter
@@ -131,7 +145,8 @@ description controls. Tab and Shift-Tab move focus. Deadline selection opens a
 calendar with hjkl day movement, [/]/PageUp/PageDown month movement, Enter to
 choose, g for today, t for the unrestricted time editor, and x to clear. In the
 time editor, type HHMM directly; h/l changes fields, j/k adjusts by one, and J/K
-adjusts by five. Press Enter on an empty tag field to open the tag panel. It
+adjusts by five. The date, hour, and minute stay visible together; crossing
+midnight automatically rolls the date. Press Enter on an empty tag field to open the tag panel. It
 supports j/k movement, selection with Enter/Space, creation with a, rename with
 r, deletion with d, and filtering with /. The same manager is available through
 |:Todo| tags. todo.nvim registers no mouse mappings.
@@ -141,6 +156,18 @@ itself is calculated from priority and deadline rather than entered manually.
 Closing a modified form prompts to save, discard, or continue editing.
 Opening a form from a dashboard suspends that dashboard and restores its view,
 filters, and selection after the form closes.
+
+The notice form has trigger, repeat interval, recurrence, tags, and description
+controls. Recurrence supports once, daily, weekdays, selected weekdays, and
+every N minutes, hours, or days. Press c on its trigger control for the calendar,
+or t to open today's time directly. Enter advances single-line fields just like
+Tab; in the multi-line description it inserts a newline. On the repeat-interval
+field, t opens a days/hours/minutes/seconds duration picker; compact input such
+as 5m remains available.
+When a reminder fires, the forced-focus popup uses d to complete the occurrence,
+s to snooze, a to archive, and q to close only the current popup. An unhandled
+item continues to remind at its configured interval. Focus, cursor, and Insert
+mode are restored after handling the popup.
 
 ==============================================================================
 5. EMERGENCY RANKING                                           *todo-emergency*
@@ -164,8 +191,8 @@ tags, task-tag links, and numbered schema migrations. Foreign keys, WAL, a busy
 timeout, and transactional migrations are enabled.
 
 Tasks may be archived and restored. Archived tasks may also be permanently
-deleted with |:Todo| delete or D in the archived view. The first release
-intentionally excludes reminders, recurrence, subtasks, synchronization, and
-project-specific databases.
+deleted with |:Todo| delete or D in the archived view. Schema v2 stores notices,
+recurrence rules, reminder state, and the last-used repeat interval. Existing
+tasks remain reminder-disabled until edited with a repeat interval.
 
 vim:tw=78:ts=8:noet:ft=help:norl:
