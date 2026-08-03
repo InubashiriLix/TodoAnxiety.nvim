@@ -55,6 +55,8 @@ lazy.nvim 安装示例：
 :Todo                         " 打开活动任务浮窗
 :Todo open sidebar emergency " 在侧栏打开紧急任务视图
 :Todo add 编写发布说明        " 预填标题并打开新任务表单
+:Todo notice 五分钟后洗澡    " 打开新 Notice 表单
+:Todo open notices           " 查看所有未归档 Notice
 :Todo tags                    " 打开标签管理面板
 :Todo done 42                " 完成 ID 为 42 的任务
 :Todo archive 42             " 归档任务，仍可恢复
@@ -65,9 +67,10 @@ lazy.nvim 安装示例：
 所有命令都通过统一的 `:Todo` 入口调用：
 
 ```text
-open [float|sidebar] [active|emergency|archived]
+open [float|sidebar] [active|emergency|notices|archived]
 toggle [float|sidebar]
 add [title]
+notice [title]
 tags
 edit [id]
 start|done|cancel|reopen [id]
@@ -87,6 +90,7 @@ close
 | `<leader>Ts` | 打开侧栏         |
 | `<leader>Te` | 打开紧急任务视图 |
 | `<leader>Tg` | 管理标签         |
+| `<leader>Tn` | 新增 Notice      |
 
 dashboard 底部会显示当前上下文的常用操作，按 `?` 可以查看完整帮助。插件不会
 覆盖已有的全局快捷键。
@@ -106,13 +110,25 @@ dashboard 底部会显示当前上下文的常用操作，按 `?` 可以查看�
 窄浮窗和侧栏使用清晰的两行任务卡，按 Enter 为选中任务打开详情浮窗。活动视图
 按状态分组，紧急视图继续按紧急度排序。
 
+Notice 用于“5 分钟后洗澡”这类需要持续催促的日常事项。使用 `:Todo notice [标题]`
+创建，在触发时间中直接输入 `30s`、`5m`、`2h` 或准确日期；Normal 模式按 `c`
+也可使用月历和任意时间编辑器。周期支持一次、每天、工作日、指定星期，以及每隔
+N 分钟、小时或天。重复提醒间隔会预填上一次使用的值；在该字段按 `t` 可打开
+`[天] [小时] [分钟] [秒]` 四段式时长选择器，同时仍可直接输入 `5m` 等简写。
+
+到点后插件播放声音并强制聚焦提醒窗口：`d` 完成本轮，`s` 输入相对时间稍后提醒，
+`a` 归档并永久停止，`q` 只关闭本次弹窗。未处理的事项会按照自己的间隔持续提醒；
+周期 Notice 完成本轮后计算下一个未来触发时间。Neovim 关闭期间无法播放声音，
+但下次启动或系统恢复时会立即补提醒。
+
 新增/编辑表单使用独立控件，不再解析整块纯文本：
 
 - 带行内校验的标题输入框
 - 始终可见的 P0–P3 优先级选择器（`0`–`3`、方向键或 Enter 菜单）和四段式
   状态选择器（`1`–`4`、方向键或 Enter 菜单）
 - 纯键盘月历和不受预设限制的时间编辑器：可直接输入 `HHMM`，也可以按 1 或 5
-  小时/分钟调整，或者保留为仅日期；不再提供固定时间或隐藏的鼠标日期按钮
+  小时/分钟调整，或者保留为仅日期；时间选择器会同时显示日期、小时和分钟，越过
+  24:00 或 00:00 时日期会自动前进或后退；不再提供固定时间或隐藏的鼠标日期按钮
 - 独立标签面板，支持选择、新建、重命名、删除、筛选和查看使用量；在空标签
   输入框按 Enter 打开，再用 `j`/`k` 和 Enter/空格切换选中；也可以使用
   `:Todo tags` 或 `<leader>Tg` 全局管理。删除
@@ -133,7 +149,7 @@ require("todo").setup({
   language = "zh-CN", -- "en" 或 "zh-CN"
   ui = {
     default_mode = "float", -- "float" 或 "sidebar"
-    default_view = "active", -- "active"、"emergency" 或 "archived"
+    default_view = "active", -- "active"、"emergency"、"notices" 或 "archived"
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
@@ -145,6 +161,7 @@ require("todo").setup({
     open_sidebar = "<leader>Ts",
     open_emergency = "<leader>Te",
     manage_tags = "<leader>Tg",
+    add_notice = "<leader>Tn",
   },
   -- 可选的 which-key v3 原生图标元数据；
   -- 也可直接填写字符串；使用 false 或 "" 禁用某一个图标
@@ -155,6 +172,14 @@ require("todo").setup({
     open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
     open_emergency = { icon = "\u{f071}", color = "orange" },
     manage_tags = { icon = "\u{f02c}", color = "purple" },
+    add_notice = { icon = "\u{f0f3}", color = "orange" },
+  },
+  reminders = {
+    enabled = true,
+    sound = {
+      path = "/path/to/reminder.ogg",
+      command = { "mpv", "--no-video", "--really-quiet" },
+    },
   },
 })
 ```
@@ -162,6 +187,11 @@ require("todo").setup({
 检测到 which-key v3 时，todo.nvim 会通过 `which-key.add()` 把以上配置作为原生
 `icon` 元数据注册。which-key 会将它们渲染在独立、对齐且带颜色的图标列中。
 没有安装 which-key 时，快捷键仍然正常工作，`desc` 也会保持为不含图标的纯文本。
+
+声音命令按 argv 列表执行，不经过 shell。将 `command` 设为 `false` 时会依次检测
+`mpv`、`ffplay`、`paplay` 和 `afplay`；路径为空、文件不可读或播放器不可用时，
+回退到终端响铃。普通任务设置 DDL 后，重复提醒间隔是必填项；没有 DDL 时不会
+创建提醒。
 
 插件使用单个全局数据库，不会为不同代码项目分别创建数据库。备份数据库时，
 可以先关闭 Neovim 再复制配置中的 `.db` 文件；数据库正在使用时则应使用
@@ -210,7 +240,8 @@ SQLite 提供的备份工具。
 - `cancelled`：取消
 
 任务可以归档和恢复；任务归档后，也可以经过确认将其永久删除。永久删除不可恢复。
-首版有意不包含提醒、重复任务、子任务、云同步和项目级数据库。
+Notice 和带 DDL 的普通任务都可持久化提醒状态。旧数据库会自动升级到 schema v2，
+旧任务不会突然启用声音提醒；编辑并保存提醒间隔后才会启用。
 
 默认数据库路径：
 
