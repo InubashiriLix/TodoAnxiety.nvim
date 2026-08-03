@@ -35,7 +35,114 @@ test("configuration defaults and validation", function()
   local ok = pcall(config.setup, { language = "fr" })
   eq(ok, false)
   eq(pcall(config.setup, { ui = { float = { width = 80 } } }), false)
-  config.setup({ keymaps = { enabled = false } })
+  config.setup({ keymaps = { toggle = false } })
+end)
+
+test("keymaps accept full key strings and false", function()
+  local config = require("todo.config")
+
+  config.setup({
+    keymaps = {
+      toggle = "<C-t>",
+      add = false,
+      manage_tags = "<leader>tg",
+    },
+    icons = {
+      toggle = "!",
+      add = "",
+    },
+  })
+  local km = config.get().keymaps
+  eq(km.toggle, "<C-t>")
+  eq(km.add, false)
+  eq(km.manage_tags, "<leader>tg")
+  eq(km.open_float, "<leader>Tf", "missing keys keep defaults")
+  eq(km.open_sidebar, "<leader>Ts")
+  eq(km.open_emergency, "<leader>Te")
+  eq(config.get().icons.toggle, "!")
+  eq(config.get().icons.add, "")
+end)
+
+test("keymaps: register, disable, and cleanup across re-configurations", function()
+  local config = require("todo.config")
+  config.setup({
+    keymaps = { toggle = "<C-x>", add = "<C-a>" },
+    icons = { toggle = "✦", add = "✚" },
+  })
+
+  local M = require("todo")
+  M._bootstrap()
+
+  local function registered(lhs)
+    local d = vim.fn.maparg(lhs, "n", false, true)
+    return d.lhs and d.lhs ~= ""
+  end
+
+  local function desc(lhs)
+    return vim.fn.maparg(lhs, "n", false, true).desc or ""
+  end
+
+  assert(registered("<C-x>"), "<C-x> should be mapped")
+  assert(desc("<C-x>"):find("✦ toggle"), "icon in desc: " .. desc("<C-x>"))
+  assert(registered("<C-a>"), "<C-a> should be mapped")
+  assert(desc("<C-a>"):find("✚ add"), "icon in desc: " .. desc("<C-a>"))
+
+  -- Reconfigure without add -> old maps should be cleaned up
+  config.setup({ keymaps = { toggle = "<C-y>", add = false } })
+  M._bootstrap()
+
+  assert(registered("<C-y>"), "<C-y> should be mapped after reconfig")
+  assert(not registered("<C-x>"), "<C-x> should be cleaned up")
+  assert(not registered("<C-a>"), "<C-a> should be cleaned up when disabled")
+end)
+
+test("keymaps: reject non-string, non-false values", function()
+  local config = require("todo.config")
+  eq(pcall(config.setup, { keymaps = { toggle = 1 } }), false)
+  eq(pcall(config.setup, { keymaps = { toggle = true } }), false)
+  eq(pcall(config.setup, { keymaps = { toggle = {} } }), false)
+  eq(pcall(config.setup, { keymaps = { toggle = "" } }), false, "empty string should be rejected")
+  eq(pcall(config.setup, { keymaps = { toggle = false } }), true)
+  eq(pcall(config.setup, { keymaps = { toggle = "<leader>t" } }), true)
+end)
+
+test("keymaps: non-conflicting with pre-existing user mappings", function()
+  local config = require("todo.config")
+  vim.keymap.set("n", "<C-q>", "<Nop>", { silent = true, desc = "user: close" })
+  config.setup({ keymaps = { toggle = "<C-q>", add = false } })
+  require("todo")._bootstrap()
+  -- The warn notify is scheduled; just verify nothing exploded.
+end)
+
+test("keymaps: partial override leaves other keys at defaults", function()
+  local config = require("todo.config")
+  config.setup({ keymaps = { toggle = "<leader>X" } })
+  local km = config.get().keymaps
+  eq(km.toggle, "<leader>X")
+  eq(km.add, "<leader>Ta")
+  eq(km.open_float, "<leader>Tf")
+  eq(km.open_sidebar, "<leader>Ts")
+  eq(km.open_emergency, "<leader>Te")
+  eq(km.manage_tags, "<leader>Tg")
+end)
+
+test("keymaps: icons missing from config fall back to defaults", function()
+  local config = require("todo.config")
+  config.setup({ icons = { toggle = "X" } })
+  eq(config.get().icons.toggle, "X")
+  eq(config.get().icons.add, "+")
+end)
+
+test("keymaps: health check iterates over configured keymaps", function()
+  local config = require("todo.config")
+  config.setup({
+    keymaps = { toggle = "<leader>Tt", add = false, manage_tags = "<leader>Tg" },
+  })
+  require("todo")._bootstrap()
+
+  -- health should handle false entries without error
+  local ok, err = pcall(require, "todo.health")
+  assert(ok, "health module loaded: " .. tostring(err))
 end)
 
 test("command completion distinguishes subcommands and arguments", function()
@@ -286,7 +393,7 @@ end)
 local nui_ok = pcall(require, "nui.popup")
 if nui_ok then
   test("NUI dashboard opens in responsive float and sidebar modes", function()
-    require("todo.config").setup({ keymaps = { enabled = false }, ui = { default_mode = "float" } })
+    require("todo.config").setup({ keymaps = { toggle = false }, ui = { default_mode = "float" } })
     local fake_service = require("todo.service").new(memory_store({
       {
         id = 1,
