@@ -4,259 +4,332 @@ local i18n = require("todo.i18n")
 local M = {}
 local store_instance
 local service_instance
+local scheduler_instance
 local registered_maps = {}
 local highlights_registered = false
 
 local function close_store()
-  if store_instance then
-    pcall(function()
-      store_instance:close()
-    end)
-  end
-  store_instance, service_instance = nil, nil
+    if scheduler_instance then
+        pcall(function()
+            scheduler_instance:stop()
+        end)
+        scheduler_instance = nil
+    end
+    if store_instance then
+        pcall(function()
+            store_instance:close()
+        end)
+    end
+    store_instance, service_instance = nil, nil
+end
+
+local function start_scheduler()
+    if not config.get().reminders.enabled then
+        if scheduler_instance then
+            scheduler_instance:stop()
+            scheduler_instance = nil
+        end
+        return
+    end
+    if not scheduler_instance then
+        scheduler_instance = require("todo.scheduler").new(M._service())
+    end
+    scheduler_instance:start()
 end
 
 local function map_is_ours(lhs)
-  local mapping = vim.fn.maparg(lhs, "n", false, true)
-  return type(mapping) == "table" and type(mapping.desc) == "string" and vim.startswith(mapping.desc, "todo.nvim:")
+    local mapping = vim.fn.maparg(lhs, "n", false, true)
+    return type(mapping) == "table" and type(mapping.desc) == "string" and vim.startswith(mapping.desc, "todo.nvim:")
 end
 
 local function register_which_key(definitions)
-  local ok, which_key = pcall(require, "which-key")
-  if not ok or type(which_key.add) ~= "function" then
-    return
-  end
-  local specs = {}
-  for _, definition in ipairs(definitions) do
-    local lhs, icon = definition[1], definition[4]
-    if lhs ~= false and icon ~= false and icon ~= "" and map_is_ours(lhs) then
-      local registered_lhs = lhs
-      specs[#specs + 1] = {
-        lhs,
-        mode = "n",
-        icon = icon,
-        cond = function()
-          return map_is_ours(registered_lhs)
-        end,
-      }
+    local ok, which_key = pcall(require, "which-key")
+    if not ok or type(which_key.add) ~= "function" then
+        return
     end
-  end
-  if #specs > 0 then
-    which_key.add(specs)
-  end
+    local specs = {}
+    for _, definition in ipairs(definitions) do
+        local lhs, icon = definition[1], definition[4]
+        if lhs ~= false and icon ~= false and icon ~= "" and map_is_ours(lhs) then
+            local registered_lhs = lhs
+            specs[#specs + 1] = {
+                lhs,
+                mode = "n",
+                icon = icon,
+                cond = function()
+                    return map_is_ours(registered_lhs)
+                end,
+            }
+        end
+    end
+    if #specs > 0 then
+        which_key.add(specs)
+    end
 end
 
 local function register_keymaps()
-  for _, lhs in ipairs(registered_maps) do
-    if map_is_ours(lhs) then
-      pcall(vim.keymap.del, "n", lhs)
+    for _, lhs in ipairs(registered_maps) do
+        if map_is_ours(lhs) then
+            pcall(vim.keymap.del, "n", lhs)
+        end
     end
-  end
-  registered_maps = {}
-  local maps = config.get().keymaps
-  local icons = config.get().icons or {}
-  local definitions = {
-    {
-      maps.toggle,
-      function()
-        M.toggle()
-      end,
-      "toggle",
-      icons.toggle or "",
-    },
-    {
-      maps.add,
-      function()
-        M.add()
-      end,
-      "add task",
-      icons.add or "",
-    },
-    {
-      maps.open_float,
-      function()
-        M.open({ mode = "float" })
-      end,
-      "open float",
-      icons.open_float or "",
-    },
-    {
-      maps.open_sidebar,
-      function()
-        M.open({ mode = "sidebar" })
-      end,
-      "open sidebar",
-      icons.open_sidebar or "",
-    },
-    {
-      maps.open_emergency,
-      function()
-        M.open({ mode = "float", view = "emergency" })
-      end,
-      "open emergency",
-      icons.open_emergency or "",
-    },
-    {
-      maps.manage_tags,
-      function()
-        M.tags()
-      end,
-      "manage tags",
-      icons.manage_tags or "",
-    },
-  }
-  for _, definition in ipairs(definitions) do
-    local lhs = definition[1]
-    if lhs == false then
-      goto continue
+    registered_maps = {}
+    local maps = config.get().keymaps
+    local icons = config.get().icons or {}
+    local definitions = {
+        {
+            maps.toggle,
+            function()
+                M.toggle()
+            end,
+            "toggle",
+            icons.toggle or "",
+        },
+        {
+            maps.add,
+            function()
+                M.add()
+            end,
+            "add task",
+            icons.add or "",
+        },
+        {
+            maps.open_float,
+            function()
+                M.open({ mode = "float" })
+            end,
+            "open float",
+            icons.open_float or "",
+        },
+        {
+            maps.open_sidebar,
+            function()
+                M.open({ mode = "sidebar" })
+            end,
+            "open sidebar",
+            icons.open_sidebar or "",
+        },
+        {
+            maps.open_emergency,
+            function()
+                M.open({ mode = "float", view = "emergency" })
+            end,
+            "open emergency",
+            icons.open_emergency or "",
+        },
+        {
+            maps.manage_tags,
+            function()
+                M.tags()
+            end,
+            "manage tags",
+            icons.manage_tags or "",
+        },
+        {
+            maps.add_notice,
+            function()
+                M.notice()
+            end,
+            "add notice",
+            icons.add_notice or "",
+        },
+    }
+    for _, definition in ipairs(definitions) do
+        local lhs = definition[1]
+        if lhs == false then
+            goto continue
+        end
+        if vim.fn.maparg(lhs, "n") == "" then
+            vim.keymap.set("n", lhs, definition[2], { silent = true, desc = "todo.nvim: " .. definition[3] })
+            registered_maps[#registered_maps + 1] = lhs
+        else
+            vim.schedule(function()
+                vim.notify(i18n.t("key_conflict", lhs), vim.log.levels.WARN, { title = "todo.nvim" })
+            end)
+        end
+        ::continue::
     end
-    if vim.fn.maparg(lhs, "n") == "" then
-      vim.keymap.set("n", lhs, definition[2], { silent = true, desc = "todo.nvim: " .. definition[3] })
-      registered_maps[#registered_maps + 1] = lhs
-    else
-      vim.schedule(function()
-        vim.notify(i18n.t("key_conflict", lhs), vim.log.levels.WARN, { title = "todo.nvim" })
-      end)
-    end
-    ::continue::
-  end
-  register_which_key(definitions)
+    register_which_key(definitions)
 end
 
 function M.setup(opts)
-  local old_path = config.get().db_path
-  local result = config.setup(opts)
-  if old_path ~= result.db_path then
-    close_store()
-  end
-  register_keymaps()
-  return result
+    local old_path = config.get().db_path
+    local result = config.setup(opts)
+    if old_path ~= result.db_path then
+        close_store()
+    end
+    register_keymaps()
+    if result.reminders.enabled then
+        vim.schedule(start_scheduler)
+    else
+        start_scheduler()
+    end
+    return result
 end
 
 function M._bootstrap()
-  require("todo.ui.highlights").setup()
-  if not highlights_registered then
-    highlights_registered = true
-    local group = vim.api.nvim_create_augroup("TodoNvimHighlights", { clear = true })
-    vim.api.nvim_create_autocmd("ColorScheme", {
-      group = group,
-      callback = function()
-        require("todo.ui.highlights").setup()
-      end,
-    })
-  end
-  register_keymaps()
+    require("todo.ui.highlights").setup()
+    if not highlights_registered then
+        highlights_registered = true
+        local group = vim.api.nvim_create_augroup("TodoNvimHighlights", { clear = true })
+        vim.api.nvim_create_autocmd("ColorScheme", {
+            group = group,
+            callback = function()
+                require("todo.ui.highlights").setup()
+            end,
+        })
+    end
+    register_keymaps()
 end
 
 function M._service()
-  if service_instance then
+    if service_instance then
+        return service_instance
+    end
+    local Store = require("todo.store")
+    store_instance = Store.open(config.get().db_path)
+    service_instance = require("todo.service").new(store_instance)
     return service_instance
-  end
-  local Store = require("todo.store")
-  store_instance = Store.open(config.get().db_path)
-  service_instance = require("todo.service").new(store_instance)
-  return service_instance
+end
+
+function M._reschedule_reminders()
+    start_scheduler()
 end
 
 function M.open(opts)
-  require("todo.ui.panel").open(opts)
+    require("todo.ui.panel").open(opts)
 end
 
 function M.toggle(opts)
-  require("todo.ui.panel").toggle(opts)
+    require("todo.ui.panel").toggle(opts)
 end
 
 function M.close()
-  require("todo.ui.panel").close()
+    require("todo.ui.panel").close()
 end
 
 function M.tags()
-  require("todo.ui.tag_panel").open({
-    on_close = function()
-      require("todo.ui.panel").refresh()
-    end,
-  })
+    require("todo.ui.tag_panel").open({
+        on_close = function()
+            require("todo.ui.panel").refresh()
+        end,
+    })
 end
 
 function M.add(opts)
-  opts = opts or {}
-  local panel = require("todo.ui.panel")
-  if panel.add(opts) then
-    return
-  end
-  require("todo.ui.form").open({ title = opts.title or "" }, function(input)
-    local result, errors = M._service():create(input)
-    if result then
-      require("todo.ui.panel").refresh()
+    opts = opts or {}
+    local panel = require("todo.ui.panel")
+    if panel.add(opts) then
+        return
     end
-    return result, errors
-  end)
+    local last_interval = M._service():last_reminder_interval()
+    require("todo.ui.form").open({
+        title = opts.title or "",
+        reminder = last_interval and { repeat_interval_seconds = last_interval } or nil,
+    }, function(input)
+        local result, errors = M._service():create(input)
+        if result then
+            require("todo.ui.panel").refresh()
+            start_scheduler()
+        end
+        return result, errors
+    end)
+end
+
+function M.notice(opts)
+    opts = opts or {}
+    local panel = require("todo.ui.panel")
+    if panel.add_notice(opts) then
+        return
+    end
+    local default_interval = M._service():last_reminder_interval()
+    require("todo.ui.notice_form").open({ title = opts.title or "" }, function(input)
+        local result, errors = M._service():create(input)
+        if result then
+            panel.refresh()
+            start_scheduler()
+        end
+        return result, errors
+    end, {
+        default_interval = default_interval and require("todo.duration").format(default_interval) or "",
+    })
 end
 
 function M.edit(id)
-  local panel = require("todo.ui.panel")
-  if panel.edit(id) then
-    return
-  end
-  local task = M._service().store:get(id)
-  if not task then
-    error(i18n.t("task_not_found", id))
-  end
-  require("todo.ui.form").open(task, function(input)
-    local result, errors = M._service():update(id, input)
-    if result then
-      require("todo.ui.panel").refresh()
+    local panel = require("todo.ui.panel")
+    if panel.edit(id) then
+        return
     end
-    return result, errors
-  end)
+    local task = M._service().store:get(id)
+    if not task then
+        error(i18n.t("task_not_found", id))
+    end
+    local form_module = task.kind == "notice" and "todo.ui.notice_form" or "todo.ui.form"
+    require(form_module).open(task, function(input)
+        local result, errors = M._service():update(id, input)
+        if result then
+            require("todo.ui.panel").refresh()
+            start_scheduler()
+        end
+        return result, errors
+    end)
 end
 
 function M.set_status(id, status)
-  local result, errors = M._service():set_status(id, status)
-  if not result then
-    if errors and errors.id then
-      error(i18n.t("task_not_found", id))
+    local result, errors = M._service():set_status(id, status)
+    if not result then
+        if errors and errors.id then
+            error(i18n.t("task_not_found", id))
+        end
+        error("invalid status: " .. tostring(status))
     end
-    error("invalid status: " .. tostring(status))
-  end
-  require("todo.ui.panel").refresh()
-  return result
+    require("todo.ui.panel").refresh()
+    if scheduler_instance then
+        scheduler_instance:reschedule()
+    end
+    return result
 end
 
 function M.archive(id)
-  local result, errors = M._service():archive(id)
-  if not result then
-    error(errors and i18n.t("task_not_found", id) or "archive failed")
-  end
-  require("todo.ui.panel").refresh()
-  return result
+    local result, errors = M._service():archive(id)
+    if not result then
+        error(errors and i18n.t("task_not_found", id) or "archive failed")
+    end
+    require("todo.ui.panel").refresh()
+    if scheduler_instance then
+        scheduler_instance:reschedule()
+    end
+    return result
 end
 
 function M.restore(id)
-  local result, errors = M._service():restore(id)
-  if not result then
-    error(errors and i18n.t("task_not_found", id) or "restore failed")
-  end
-  require("todo.ui.panel").refresh()
-  return result
+    local result, errors = M._service():restore(id)
+    if not result then
+        error(errors and i18n.t("task_not_found", id) or "restore failed")
+    end
+    require("todo.ui.panel").refresh()
+    if scheduler_instance then
+        scheduler_instance:reschedule()
+    end
+    return result
 end
 
 function M.delete(id)
-  local result, errors = M._service():delete_archived(id)
-  if not result then
-    if errors and errors.id then
-      error(i18n.t("task_not_found", id))
-    elseif errors and errors.archived then
-      error(i18n.t("delete_archived_only"))
+    local result, errors = M._service():delete_archived(id)
+    if not result then
+        if errors and errors.id then
+            error(i18n.t("task_not_found", id))
+        elseif errors and errors.archived then
+            error(i18n.t("delete_archived_only"))
+        end
+        error(i18n.t("delete_failed"))
     end
-    error(i18n.t("delete_failed"))
-  end
-  require("todo.ui.panel").refresh()
-  return result
+    require("todo.ui.panel").refresh()
+    return result
 end
 
 function M._reset_for_tests()
-  close_store()
+    close_store()
 end
 
 return M

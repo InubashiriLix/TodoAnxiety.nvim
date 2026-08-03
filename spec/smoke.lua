@@ -7,6 +7,7 @@ todo.setup({
   db_path = database,
   language = "zh-CN",
   keymaps = { enabled = false },
+  reminders = { enabled = false },
 })
 
 local task = assert(todo._service():create({
@@ -14,13 +15,25 @@ local task = assert(todo._service():create({
   description = "SQLite、服务层和 NUI 应当协同工作。",
   priority = "P1",
   deadline = "2026-08-02 18:00",
+  reminder_interval = "5m",
   tags = { "集成", "UI" },
 }))
 
+local notice = assert(todo._service():create({
+  kind = "notice",
+  title = "五分钟后洗澡",
+  trigger = "5m",
+  reminder_interval = "2m",
+  recurrence = { kind = "once" },
+}))
+
 assert(vim.fn.exists(":Todo") == 2, ":Todo command was not registered")
-vim.cmd("Todo open float emergency")
+vim.cmd("Todo open float notices")
 vim.wait(30)
 local panel = require("todo.ui.panel")
+assert(panel.current_task().id == notice.id, "notice view did not select the persisted notice")
+vim.cmd("Todo open float emergency")
+vim.wait(30)
 assert(panel.is_open(), "dashboard did not open")
 assert(panel.current_task().id == task.id, "created task is not selected")
 assert(panel.inspect_state().stats.emergency == 1, "emergency count is incorrect")

@@ -55,6 +55,8 @@ Run `:checkhealth todo` after installation.
 :Todo                         " open the active-task float
 :Todo open sidebar emergency " emergency view in the sidebar
 :Todo add Write release notes " prefill a new-task form
+:Todo notice Take a shower    " create a notice
+:Todo open notices            " list active notices
 :Todo tags                    " open the tag manager
 :Todo done 42                " complete task 42
 :Todo archive 42             " archive while keeping the task recoverable
@@ -65,9 +67,10 @@ Run `:checkhealth todo` after installation.
 All commands use the single `:Todo` entry point:
 
 ```text
-open [float|sidebar] [active|emergency|archived]
+open [float|sidebar] [active|emergency|notices|archived]
 toggle [float|sidebar]
 add [title]
+notice [title]
 tags
 edit [id]
 start|done|cancel|reopen [id]
@@ -87,6 +90,7 @@ Default global mappings:
 | `<leader>Ts` | Open the sidebar         |
 | `<leader>Te` | Open the emergency view  |
 | `<leader>Tg` | Manage tags              |
+| `<leader>Tn` | Add a notice             |
 
 The dashboard footer shows common context-sensitive actions. Press `?` to show
 the complete help. Existing global mappings are never overwritten.
@@ -109,6 +113,20 @@ columns are available. Narrow floats and the sidebar use two-line task cards;
 press Enter to open the selected task in a detail popup. Active tasks are grouped
 by status, while the emergency view retains urgency ordering.
 
+Notices handle short-lived reminders such as “take a shower in five minutes.”
+Create one with `:Todo notice [title]`; its trigger accepts `30s`, `5m`, `2h`,
+or an exact date, and `c` opens the keyboard calendar and unrestricted time
+editor. Recurrence supports once, daily, weekdays, selected weekdays, and every
+N minutes, hours, or days. The repeat interval remembers its last value. Press
+`t` on that field for a four-part days/hours/minutes/seconds picker, or keep
+typing compact values such as `5m` directly.
+
+When due, todo.nvim plays a sound and focuses a reminder popup: `d` completes
+the occurrence, `s` snoozes by a relative duration, `a` archives permanently,
+and `q` closes only the current popup. Unhandled items continue at their own
+repeat interval. Missed reminders fire immediately when Neovim starts or the
+machine resumes; no sound can play while Neovim is completely stopped.
+
 The add/edit form uses separate controls instead of parsing a text buffer:
 
 - A title input with inline validation
@@ -116,7 +134,8 @@ The add/edit form uses separate controls instead of parsing a text buffer:
   four-part status selector (`1`–`4`, arrow keys, or Enter menu)
 - A keyboard calendar for choosing the date and an unrestricted time editor:
   type `HHMM` directly, adjust by one or five minutes/hours, or keep the task
-  date-only. No fixed time presets or hidden mouse-only date buttons.
+  date-only. The picker shows date, hour, and minute together and rolls the date
+  when crossing midnight. No fixed time presets or hidden mouse-only date buttons.
 - A dedicated tag panel for selecting, creating, renaming, deleting, filtering,
   and inspecting usage counts; press Enter on an empty tag field, then use
   `j`/`k` and Enter/Space to toggle tags. You can also
@@ -140,7 +159,7 @@ require("todo").setup({
   language = "en", -- "en" or "zh-CN"
   ui = {
     default_mode = "float", -- "float" or "sidebar"
-    default_view = "active", -- "active", "emergency", or "archived"
+    default_view = "active", -- "active", "emergency", "notices", or "archived"
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
@@ -152,6 +171,7 @@ require("todo").setup({
     open_sidebar = "<leader>Ts",
     open_emergency = "<leader>Te",
     manage_tags = "<leader>Tg",
+    add_notice = "<leader>Tn",
   },
   -- Optional which-key v3 icon metadata.
   -- A plain string is also accepted; use false or "" to disable one icon.
@@ -162,6 +182,14 @@ require("todo").setup({
     open_sidebar = { icon = "\u{f03c7}", color = "cyan" },
     open_emergency = { icon = "\u{f071}", color = "orange" },
     manage_tags = { icon = "\u{f02c}", color = "purple" },
+    add_notice = { icon = "\u{f0f3}", color = "orange" },
+  },
+  reminders = {
+    enabled = true,
+    sound = {
+      path = "/path/to/reminder.ogg",
+      command = { "mpv", "--no-video", "--really-quiet" },
+    },
   },
 })
 ```
@@ -170,6 +198,12 @@ When which-key v3 is available, todo.nvim passes these values through
 `which-key.add()` as native `icon` metadata. The popup therefore renders a
 separate, aligned, color-highlighted icon column. Without which-key, the
 mappings still work and their descriptions remain clean text.
+
+The sound command is executed as an argv list without a shell. Set `command`
+to `false` to auto-detect `mpv`, `ffplay`, `paplay`, or `afplay`; an empty path,
+unreadable file, or missing player falls back to the terminal bell. A repeat
+interval is required when a regular task has a deadline; tasks without a
+deadline do not create reminders.
 
 The plugin stores one global database rather than one database per project.
 Back up the configured `.db` file after closing Neovim, or use SQLite's backup
@@ -193,8 +227,9 @@ a time means 23:59:59 on that date.
 Tasks have a title, multi-line plain-text description, status, P0–P3 priority,
 optional deadline, and zero or more tags. Statuses are `todo`, `in_progress`,
 `done`, and `cancelled`. Tasks can be archived, restored, and—only after they
-have been archived—permanently deleted. Reminders, recurring tasks, subtasks,
-sync, and project scoping are deliberately outside the first release.
+have been archived—permanently deleted. Notices and task deadlines persist
+their reminder state. Existing databases migrate to schema v2 without enabling
+sound for old tasks until a reminder interval is saved.
 
 ## Development
 
