@@ -1,0 +1,9 @@
+:Todo	todo.nvim.txt	/*:Todo*
+todo-commands	todo.nvim.txt	/*todo-commands*
+todo-contents	todo.nvim.txt	/*todo-contents*
+todo-data	todo.nvim.txt	/*todo-data*
+todo-emergency	todo.nvim.txt	/*todo-emergency*
+todo-intro	todo.nvim.txt	/*todo-intro*
+todo-mappings	todo.nvim.txt	/*todo-mappings*
+todo-setup	todo.nvim.txt	/*todo-setup*
+todo.nvim.txt	todo.nvim.txt	/*todo.nvim.txt*
