@@ -29,14 +29,10 @@ local function register_keymaps()
   end
   registered_maps = {}
   local maps = config.get().keymaps
-  if not maps.enabled then
-    return
-  end
-  local prefix = maps.prefix
-  local icons = maps.icons or {}
+  local icons = config.get().icons or {}
   local definitions = {
     {
-      maps.mappings.toggle,
+      maps.toggle,
       function()
         M.toggle()
       end,
@@ -44,7 +40,7 @@ local function register_keymaps()
       icons.toggle or "",
     },
     {
-      maps.mappings.add,
+      maps.add,
       function()
         M.add()
       end,
@@ -52,7 +48,7 @@ local function register_keymaps()
       icons.add or "",
     },
     {
-      maps.mappings.open_float,
+      maps.open_float,
       function()
         M.open({ mode = "float" })
       end,
@@ -60,7 +56,7 @@ local function register_keymaps()
       icons.open_float or "",
     },
     {
-      maps.mappings.open_sidebar,
+      maps.open_sidebar,
       function()
         M.open({ mode = "sidebar" })
       end,
@@ -68,7 +64,7 @@ local function register_keymaps()
       icons.open_sidebar or "",
     },
     {
-      maps.mappings.open_emergency,
+      maps.open_emergency,
       function()
         M.open({ mode = "float", view = "emergency" })
       end,
@@ -76,7 +72,7 @@ local function register_keymaps()
       icons.open_emergency or "",
     },
     {
-      maps.mappings.manage_tags,
+      maps.manage_tags,
       function()
         M.tags()
       end,
@@ -85,10 +81,10 @@ local function register_keymaps()
     },
   }
   for _, definition in ipairs(definitions) do
-    if definition[1] == false then
+    local lhs = definition[1]
+    if lhs == false then
       goto continue
     end
-    local lhs = prefix .. definition[1]
     if vim.fn.maparg(lhs, "n") == "" then
       local desc = "todo.nvim: " .. definition[3]
       if definition[4] ~= "" then

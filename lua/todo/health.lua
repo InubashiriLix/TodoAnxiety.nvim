@@ -66,14 +66,12 @@ function M.check()
     end
   end
 
-  local prefix = cfg.keymaps.prefix
-  for name, suffix in pairs(cfg.keymaps.mappings) do
-    if suffix == false then
+  for name, lhs in pairs(cfg.keymaps) do
+    if lhs == false then
       goto continue
     end
-    local lhs = prefix .. suffix
     local mapping = vim.fn.maparg(lhs, "n", false, true)
-    if type(mapping) == "table" and mapping.lhs and mapping.lhs ~= "" then
+    if mapping.lhs then
       if type(mapping.desc) == "string" and vim.startswith(mapping.desc, "todo.nvim:") then
         vim.health.ok("Default mapping active: " .. lhs)
       else
