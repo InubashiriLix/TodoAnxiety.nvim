@@ -121,6 +121,11 @@ floating view adds a fixed detail pane; narrow layouts open details with Enter.
 Active tasks are grouped by status. Use [ and ] to change views and h/l to move
 between the list and details in a wide dashboard.
 
+The / search input closes on WinLeave. Entering any non-todo window closes a
+floating dashboard; detail, menu, search, and tag-manager windows count as
+todo windows. A sidebar stays open. User window-navigation mappings are not
+overridden.
+
 The task form has separate title, priority, status, deadline, tag, and
 description controls. Tab and Shift-Tab move focus. Deadline selection opens a
 calendar with hjkl day movement, [/]/PageUp/PageDown month movement, Enter to

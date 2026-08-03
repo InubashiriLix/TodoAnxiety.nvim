@@ -91,6 +91,12 @@ Default global mappings:
 The dashboard footer shows common context-sensitive actions. Press `?` to show
 the complete help. Existing global mappings are never overwritten.
 
+The `/` search input closes as soon as focus moves away from it. A floating
+dashboard also closes whenever focus enters a regular editing window, while
+its own detail, menu, search, and tag-manager windows are treated as part of
+todo.nvim. A sidebar remains available after focus returns to the editor.
+Window-navigation mappings such as `Ctrl-j/k` are never overridden.
+
 In the archived view, select a task and press `D` to open a confirmation menu;
 Cancel is selected by default to prevent an accidental Enter from deleting it.
 `:Todo delete [id]` provides the command equivalent. Only archived tasks can be

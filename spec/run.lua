@@ -420,6 +420,7 @@ local nui_ok = pcall(require, "nui.popup")
 if nui_ok then
   test("NUI dashboard opens in responsive float and sidebar modes", function()
     require("todo.config").setup({ keymaps = { toggle = false }, ui = { default_mode = "float" } })
+    local external_win = vim.api.nvim_get_current_win()
     local fake_service = require("todo.service").new(memory_store({
       {
         id = 1,
@@ -447,7 +448,48 @@ if nui_ok then
     assert(vim.iter(float_lines):any(function(line)
       return line:find("Panel task", 1, true) ~= nil
     end))
-    panel.close()
+
+    vim.fn.feedkeys("/", "xt")
+    assert(
+      vim.wait(100, function()
+        local transient = panel.inspect_state().owner.transient
+        return transient ~= nil and vim.api.nvim_get_current_win() == transient.winid
+      end),
+      "search input did not open"
+    )
+    vim.api.nvim_set_current_win(panel.inspect_state().owner.list.winid)
+    assert(
+      vim.wait(100, function()
+        return panel.is_open() and panel.inspect_state().owner.transient == nil
+      end),
+      "search input should close when focus returns to the dashboard"
+    )
+
+    vim.api.nvim_set_current_win(external_win)
+    assert(
+      vim.wait(100, function()
+        return not panel.is_open()
+      end),
+      "floating dashboard should close whenever focus enters a regular window"
+    )
+
+    panel.open({ mode = "float", view = "active" })
+    vim.fn.feedkeys("/", "xt")
+    assert(
+      vim.wait(100, function()
+        local transient = panel.inspect_state().owner.transient
+        return transient ~= nil and vim.api.nvim_get_current_win() == transient.winid
+      end),
+      "search input did not reopen"
+    )
+    vim.api.nvim_set_current_win(external_win)
+    assert(
+      vim.wait(100, function()
+        return not panel.is_open()
+      end),
+      "floating dashboard should close when search focus leaves todo.nvim"
+    )
+
     panel.open({ mode = "sidebar", view = "active" })
     vim.wait(20)
     assert(panel.is_open())
@@ -459,6 +501,21 @@ if nui_ok then
       assert(vim.fn.strdisplaywidth(line) <= sidebar_width, "sidebar line exceeds window width: " .. line)
     end
     assert(sidebar_lines[#sidebar_lines]:find("[a +]", 1, true))
+    vim.fn.feedkeys("/", "xt")
+    assert(
+      vim.wait(100, function()
+        local transient = panel.inspect_state().owner.transient
+        return transient ~= nil and vim.api.nvim_get_current_win() == transient.winid
+      end),
+      "sidebar search input did not open"
+    )
+    vim.api.nvim_set_current_win(external_win)
+    assert(
+      vim.wait(100, function()
+        return panel.is_open() and panel.inspect_state().owner.transient == nil
+      end),
+      "sidebar should remain while its unfocused search input closes"
+    )
     vim.api.nvim_set_current_win(sidebar_state.owner.split.winid)
     vim.fn.feedkeys("a", "xt")
     assert(
