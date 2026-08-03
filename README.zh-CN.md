@@ -133,6 +133,25 @@ require("todo").setup({
   keymaps = {
     enabled = true,
     prefix = "<leader>T",
+    -- 自定义单个快捷键 (string) 或禁用它 (false)
+    mappings = {
+      toggle = "t",
+      add = "a",
+      open_float = "f",
+      open_sidebar = "s",
+      open_emergency = "e",
+      manage_tags = "g",
+    },
+    -- 图标会显示在 :map 和 :checkhealth 的按键描述中
+    -- 设为 "" 移除图标，或使用任意 UTF‑8 字符（比如 nerdfont 图标）
+    icons = {
+      toggle = "●",
+      add = "+",
+      open_float = "□",
+      open_sidebar = "▣",
+      open_emergency = "⚠",
+      manage_tags = "⚑",
+    },
   },
 })
 ```

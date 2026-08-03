@@ -33,60 +33,75 @@ local function register_keymaps()
     return
   end
   local prefix = maps.prefix
+  local icons = maps.icons or {}
   local definitions = {
     {
-      "t",
+      maps.mappings.toggle,
       function()
         M.toggle()
       end,
       "toggle",
+      icons.toggle or "",
     },
     {
-      "a",
+      maps.mappings.add,
       function()
         M.add()
       end,
       "add task",
+      icons.add or "",
     },
     {
-      "f",
+      maps.mappings.open_float,
       function()
         M.open({ mode = "float" })
       end,
       "open float",
+      icons.open_float or "",
     },
     {
-      "s",
+      maps.mappings.open_sidebar,
       function()
         M.open({ mode = "sidebar" })
       end,
       "open sidebar",
+      icons.open_sidebar or "",
     },
     {
-      "e",
+      maps.mappings.open_emergency,
       function()
         M.open({ mode = "float", view = "emergency" })
       end,
       "open emergency",
+      icons.open_emergency or "",
     },
     {
-      "g",
+      maps.mappings.manage_tags,
       function()
         M.tags()
       end,
       "manage tags",
+      icons.manage_tags or "",
     },
   }
   for _, definition in ipairs(definitions) do
+    if definition[1] == false then
+      goto continue
+    end
     local lhs = prefix .. definition[1]
     if vim.fn.maparg(lhs, "n") == "" then
-      vim.keymap.set("n", lhs, definition[2], { silent = true, desc = "todo.nvim: " .. definition[3] })
+      local desc = "todo.nvim: " .. definition[3]
+      if definition[4] ~= "" then
+        desc = "todo.nvim: " .. definition[4] .. " " .. definition[3]
+      end
+      vim.keymap.set("n", lhs, definition[2], { silent = true, desc = desc })
       registered_maps[#registered_maps + 1] = lhs
     else
       vim.schedule(function()
         vim.notify(i18n.t("key_conflict", lhs), vim.log.levels.WARN, { title = "todo.nvim" })
       end)
     end
+    ::continue::
   end
 end
 

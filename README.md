@@ -139,6 +139,25 @@ require("todo").setup({
   keymaps = {
     enabled = true,
     prefix = "<leader>T",
+    -- Customize individual mappings (string) or disable them (false).
+    mappings = {
+      toggle = "t",
+      add = "a",
+      open_float = "f",
+      open_sidebar = "s",
+      open_emergency = "e",
+      manage_tags = "g",
+    },
+    -- Icons are prepended to the mapping description shown by :map and :checkhealth.
+    -- Set to "" to remove an icon, or use any UTF‑8 string (e.g. nerdfont glyphs).
+    icons = {
+      toggle = "●",
+      add = "+",
+      open_float = "□",
+      open_sidebar = "▣",
+      open_emergency = "⚠",
+      manage_tags = "⚑",
+    },
   },
 })
 ```

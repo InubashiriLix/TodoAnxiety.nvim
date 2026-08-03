@@ -67,7 +67,10 @@ function M.check()
   end
 
   local prefix = cfg.keymaps.prefix
-  for _, suffix in ipairs({ "t", "a", "f", "s", "e", "g" }) do
+  for name, suffix in pairs(cfg.keymaps.mappings) do
+    if suffix == false then
+      goto continue
+    end
     local lhs = prefix .. suffix
     local mapping = vim.fn.maparg(lhs, "n", false, true)
     if type(mapping) == "table" and mapping.lhs and mapping.lhs ~= "" then
@@ -77,6 +80,7 @@ function M.check()
         vim.health.warn("Default mapping conflicts with an existing mapping: " .. lhs)
       end
     end
+    ::continue::
   end
 end
 
