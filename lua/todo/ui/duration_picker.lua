@@ -121,6 +121,7 @@ function M.open(value, opts)
     end
     map("<CR>", apply)
     map("q", owner.close)
+    map("<Esc>", owner.close)
     map("<C-q>", owner.close)
     return owner
 end

@@ -29,7 +29,8 @@ Use |:checkhealth| todo to diagnose the installation.
     language = "en", -- or "zh-CN"
     ui = {
       default_mode = "float",
-      default_view = "active",
+      default_view = "active", -- or emergency, by_urgency, by_time,
+                               -- by_tag, notices, archived
       float = { width = 0.80, height = 0.75, border = "rounded" },
       sidebar = { width = 42, side = "right" },
     },
@@ -72,8 +73,10 @@ notice(opts), tags(), and close(). Database internals are not public API.
 3. COMMANDS                                                     *todo-commands*
 
                                                              *:Todo*
-:Todo [open] [float|sidebar] [active|emergency|notices|archived]
-        Open a task view. With no arguments, use configured defaults.
+:Todo [open] [float|sidebar] [view]
+        Open a task view. The view is one of active, emergency, by_urgency,
+        by_time, by_tag, notices, or archived. With no arguments, use
+        configured defaults.
 
 :Todo toggle [float|sidebar]
         Toggle the panel.
@@ -119,21 +122,38 @@ Global defaults (all configurable or disableable):
 Existing mappings are not overwritten. Panel-local mappings:
 
   j/k          move                    <CR>   show details
+  <Tab>/za     fold section            zR/zM  expand/collapse all
   a/n/e        add task/notice/edit    s      start
   x/c/u        done/cancel/reopen      A/R    archive/restore
   D            permanently delete the selected archived task (with confirm)
   /            search                  f      filter
   g            manage tags
   v            choose view             r      refresh
+  [/]          previous/next view      <Esc>  clear filters, else close
   ?            help                    q      close
 
-The form uses CTRL-S to save, q in Normal mode to close, and CTRL-Q to close
-from either mode. Escape only exits Insert mode and never closes the form.
+The form uses CTRL-S to save, q or Escape in Normal mode to close, and CTRL-Q
+to close from either mode. In Insert mode Escape only exits Insert.
 
 The dashboard shows two-line task cards. At 100 or more available columns, the
 floating view adds a fixed detail pane; narrow layouts open details with Enter.
-Active tasks are grouped by status. Use [ and ] to change views and h/l to move
-between the list and details in a wide dashboard.
+Use [ and ] to change views and h/l to move between the list and details in a
+wide dashboard.
+
+Seven views are available: active (grouped by status), emergency (urgency-ranked
+candidates), by_urgency (all open tasks grouped by urgency band), by_time (all
+open tasks ordered by time remaining, grouped into overdue/today/this week/
+later/no deadline), by_tag (a tree with one root per tag plus Untagged), notices
+and archived. Header tabs wrap onto extra lines when the window is narrow.
+
+Every section header folds with <Tab> or za; zR expands all and zM collapses
+all. Folds are remembered per view while the panel stays open, and j/k walk
+section headers as well as tasks.
+
+Escape unwinds one layer: in the search box it clears the query and returns the
+cursor to the list from either mode; in a menu, help, or detail popup it closes
+that window; on the list it clears active filters, or closes the panel if none
+are set.
 
 The / search input closes on WinLeave. Entering any non-todo window closes a
 floating dashboard; detail, menu, search, and tag-manager windows count as

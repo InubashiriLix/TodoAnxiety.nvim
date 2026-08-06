@@ -108,6 +108,14 @@ local function matches(task, filters)
     return true
 end
 
+local regrouped = { by_urgency = true, by_time = true, by_tag = true }
+
+local function open_only(tasks)
+    return vim.tbl_filter(function(task)
+        return task.status == "todo" or task.status == "in_progress"
+    end, tasks)
+end
+
 function M:list(view, filters, now)
     local tasks = self.store:list({ archived = view == "archived" })
     if view == "notices" then
@@ -119,8 +127,42 @@ function M:list(view, filters, now)
             return task.kind ~= "notice"
         end, tasks)
     end
+    if regrouped[view] then
+        tasks = open_only(tasks)
+    end
     if view == "emergency" then
         tasks = urgency.sort(tasks, now)
+    elseif view == "by_urgency" then
+        tasks = urgency.rank(tasks, now)
+    elseif view == "by_time" then
+        local reference = now or os.time()
+        for _, task in ipairs(tasks) do
+            task.urgency = task.urgency or urgency.calculate(task, reference)
+        end
+        table.sort(tasks, function(a, b)
+            local ae, be = a.urgency.due_epoch, b.urgency.due_epoch
+            if (ae ~= nil) ~= (be ~= nil) then
+                return ae ~= nil
+            end
+            if ae and ae ~= be then
+                return ae < be
+            end
+            if a.priority ~= b.priority then
+                return a.priority < b.priority
+            end
+            return a.id < b.id
+        end)
+    elseif view == "by_tag" then
+        table.sort(tasks, function(a, b)
+            if a.priority ~= b.priority then
+                return a.priority < b.priority
+            end
+            local at, bt = a.title:lower(), b.title:lower()
+            if at ~= bt then
+                return at < bt
+            end
+            return a.id < b.id
+        end)
     elseif view == "notices" then
         table.sort(tasks, function(a, b)
             local at = a.reminder and a.reminder.next_reminder_at or math.huge

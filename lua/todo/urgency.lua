@@ -54,12 +54,11 @@ function M.is_candidate(task)
         and (task.due_date ~= nil or tonumber(task.priority) <= 1)
 end
 
-function M.sort(tasks, now)
+--- Decorate and sort every task by urgency without filtering out non-candidates.
+function M.rank(tasks, now)
     local decorated = {}
     for _, task in ipairs(tasks) do
-        if M.is_candidate(task) then
-            decorated[#decorated + 1] = { task = task, urgency = M.calculate(task, now) }
-        end
+        decorated[#decorated + 1] = { task = task, urgency = M.calculate(task, now) }
     end
     table.sort(decorated, function(a, b)
         if a.urgency.score ~= b.urgency.score then
@@ -82,6 +81,10 @@ function M.sort(tasks, now)
         result[#result + 1] = item.task
     end
     return result
+end
+
+function M.sort(tasks, now)
+    return M.rank(vim.tbl_filter(M.is_candidate, tasks), now)
 end
 
 return M

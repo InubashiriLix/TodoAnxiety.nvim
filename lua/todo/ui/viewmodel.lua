@@ -1,5 +1,3 @@
-local i18n = require("todo.i18n")
-
 local M = {}
 
 function M.truncate(text, width)
@@ -27,35 +25,11 @@ function M.truncate(text, width)
     return best .. "…"
 end
 
-function M.sections(tasks, view)
-    if view ~= "active" then
-        return { { key = view, label = i18n.t(view), tasks = tasks } }
-    end
-    local order = { "in_progress", "todo", "done", "cancelled" }
-    local buckets = {}
-    for _, status in ipairs(order) do
-        buckets[status] = {}
-    end
-    for _, task in ipairs(tasks) do
-        local bucket = buckets[task.status]
-        if bucket then
-            bucket[#bucket + 1] = task
-        end
-    end
-    local sections = {}
-    for _, status in ipairs(order) do
-        if #buckets[status] > 0 then
-            sections[#sections + 1] = {
-                key = status,
-                label = i18n.t(status),
-                tasks = buckets[status],
-            }
-        end
-    end
-    return sections
+function M.sections(tasks, view, now)
+    return require("todo.ui.grouping").sections(tasks, view, now)
 end
 
-function M.card(task, width, reason)
+function M.card(task, width, reason, opts)
     if task.kind == "notice" then
         local prefix = "󰀠  "
         local title = M.truncate(task.title, math.max(1, width - vim.fn.strdisplaywidth(prefix)))
@@ -74,6 +48,13 @@ function M.card(task, width, reason)
     local prefix = string.format("%s P%d  ", status_icons[task.status] or "?", task.priority)
     local title = M.truncate(task.title, math.max(1, width - vim.fn.strdisplaywidth(prefix)))
     local metadata = {}
+    if (opts or {}).relative then
+        local label =
+            require("todo.ui.grouping").relative((task.urgency or require("todo.urgency").calculate(task)).due_epoch)
+        if label then
+            metadata[#metadata + 1] = "⏳ " .. label
+        end
+    end
     if task.due_date then
         metadata[#metadata + 1] = "⏱ " .. task.due_date .. (task.due_time and (" " .. task.due_time) or "")
     end

@@ -67,7 +67,7 @@ Run `:checkhealth todo` after installation.
 All commands use the single `:Todo` entry point:
 
 ```text
-open [float|sidebar] [active|emergency|notices|archived]
+open [float|sidebar] [active|emergency|by_urgency|by_time|by_tag|notices|archived]
 toggle [float|sidebar]
 add [title]
 notice [title]
@@ -110,8 +110,34 @@ permanently deleted, and deletion cannot be undone.
 
 The floating dashboard uses a task list and fixed detail pane when at least 100
 columns are available. Narrow floats and the sidebar use two-line task cards;
-press Enter to open the selected task in a detail popup. Active tasks are grouped
-by status, while the emergency view retains urgency ordering.
+press Enter to open the selected task in a detail popup.
+
+### Views
+
+Seven tabs are available; `[` and `]` cycle them, `v` opens a picker, and the
+active tab is highlighted in the header. Tabs wrap onto extra header lines when
+the window is too narrow to fit them on one.
+
+| Tab | Grouping |
+| --- | --- |
+| Active | Open and closed tasks grouped by status |
+| Emergency | Urgency-ranked flat list of candidates only |
+| By level | Every open task grouped by urgency band: overdue, urgent, high, attention, priority only |
+| By time left | Every open task ordered by time remaining, grouped into overdue, due today, this week, later, no deadline. Cards show a relative `in 3d 4h` label |
+| By tag | A tree with one root per tag plus Untagged; a task with several tags appears under each of them |
+| Notices | Reminders ordered by next trigger |
+| Archived | Archived tasks, newest first |
+
+Every section header can be folded: `<Tab>` or `za` toggles the section holding
+the cursor, `zR` expands all, and `zM` collapses all. Folds are remembered per
+view for as long as the panel stays open. `j` and `k` walk section headers as
+well as tasks, so the tag view navigates like a tree. Search and the status,
+priority, and tag filters apply on top of whichever view is active.
+
+Escape unwinds one layer at a time. In the search box it clears the query,
+closes the input, and returns the cursor to the list, from either Normal or
+Insert mode. In a menu, help popup, or detail overlay it closes that window. On
+the list it clears any active filters, or closes the panel when none are set.
 
 Notices handle short-lived reminders such as “take a shower in five minutes.”
 Create one with `:Todo notice [title]`; its trigger accepts `30s`, `5m`, `2h`,
@@ -143,10 +169,10 @@ The add/edit form uses separate controls instead of parsing a text buffer:
   that tag from every associated task after confirmation; tasks are not deleted.
 - An independent multi-line description editor
 
-Use Tab and Shift-Tab to move between fields, `<C-s>` to save, and `q` in Normal
-mode or `<C-q>` from either mode to close. Escape only leaves Insert mode and is
-never used as a form-close action. Unsaved forms ask whether to save, discard,
-or continue editing. todo.nvim registers no mouse mappings; every plugin action
+Use Tab and Shift-Tab to move between fields, `<C-s>` to save, and `q` or Escape
+in Normal mode, or `<C-q>` from either mode, to close. In Insert mode Escape
+still only leaves Insert, so it never closes a field you are typing in. Unsaved
+forms ask whether to save, discard, or continue editing. todo.nvim registers no mouse mappings; every plugin action
 uses one visible keyboard path. When a form is opened from a dashboard,
 the dashboard is suspended and restored afterward so the two interfaces never
 overlap.
@@ -159,7 +185,9 @@ require("todo").setup({
   language = "en", -- "en" or "zh-CN"
   ui = {
     default_mode = "float", -- "float" or "sidebar"
-    default_view = "active", -- "active", "emergency", "notices", or "archived"
+    -- "active", "emergency", "by_urgency", "by_time", "by_tag", "notices", or
+    -- "archived"
+    default_view = "active",
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
