@@ -77,7 +77,8 @@ function M:reschedule()
         return
     end
     local seconds = next_at - self.now()
-    local delay = seconds <= 0 and next(self.pending_ids) and 30000 or math.max(10, math.min(2147483647, seconds * 1000))
+    local delay = seconds <= 0 and next(self.pending_ids) and 30000
+        or math.max(10, math.min(2147483647, seconds * 1000))
     self.timer:start(
         delay,
         0,

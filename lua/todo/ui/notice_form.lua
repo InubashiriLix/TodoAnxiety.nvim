@@ -78,12 +78,12 @@ local function recurrence_from(fields)
         local amount, unit = fields.recurrence_spec:lower():match("^(%d+)%s*([mhd])$")
         local units = { m = "minutes", h = "hours", d = "days" }
         return amount
-            and tonumber(amount) > 0
-            and {
-                kind = "interval",
-                every = tonumber(amount),
-                unit = units[unit],
-            }
+                and tonumber(amount) > 0
+                and {
+                    kind = "interval",
+                    every = tonumber(amount),
+                    unit = units[unit],
+                }
             or nil
     end
     return { kind = fields.recurrence, every = 1 }
@@ -147,14 +147,14 @@ function M.open(task, on_save, opts)
     owner.components = components
 
     focusables = {
-        { component = components.title,           insert = true },
-        { component = components.trigger,         insert = true },
-        { component = components.interval,        insert = true },
-        { component = components.recurrence,      insert = false },
+        { component = components.title, insert = true },
+        { component = components.trigger, insert = true },
+        { component = components.interval, insert = true },
+        { component = components.recurrence, insert = false },
         { component = components.recurrence_spec, insert = true },
-        { component = components.tags,            insert = true },
-        { component = components.description,     insert = true },
-        { component = components.footer,          insert = false },
+        { component = components.tags, insert = true },
+        { component = components.description, insert = true },
+        { component = components.footer, insert = false },
     }
 
     local function set_lines(component, lines, modifiable)
@@ -167,8 +167,8 @@ function M.open(task, on_save, opts)
         local bits = {}
         for index, kind in ipairs(recurrence_kinds) do
             local label = i18n.t("recurrence_" .. kind)
-            bits[#bits + 1] = fields.recurrence == kind and ("[" .. index .. " " .. label .. "]") or
-            (index .. " " .. label)
+            bits[#bits + 1] = fields.recurrence == kind and ("[" .. index .. " " .. label .. "]")
+                or (index .. " " .. label)
         end
         set_lines(components.recurrence, { " " .. table.concat(bits, "  ") })
         local hint = fields.recurrence == "weekly" and (" " .. i18n.t("recurrence_weekly_hint") .. " ")
@@ -317,6 +317,9 @@ function M.open(task, on_save, opts)
             map("q", function()
                 close_time(false)
             end)
+            map("<Esc>", function()
+                close_time(false)
+            end)
             map("<C-q>", function()
                 close_time(false)
             end)
@@ -366,11 +369,16 @@ function M.open(task, on_save, opts)
                     and calendar.month == calendar.today.month
                     and span.day == calendar.today.day
                 if selected or today then
-                    vim.api.nvim_buf_set_extmark(calendar_popup.bufnr, calendar_popup.ns_id, span.line - 1, span.from - 1,
+                    vim.api.nvim_buf_set_extmark(
+                        calendar_popup.bufnr,
+                        calendar_popup.ns_id,
+                        span.line - 1,
+                        span.from - 1,
                         {
                             end_col = span.to,
                             hl_group = selected and "TodoSelected" or "TodoStatusInProgress",
-                        })
+                        }
+                    )
                 end
             end
         end
@@ -411,6 +419,9 @@ function M.open(task, on_save, opts)
             close_calendar(true)
         end)
         map("q", function()
+            close_calendar(false)
+        end)
+        map("<Esc>", function()
             close_calendar(false)
         end)
         map("<C-q>", function()
@@ -539,6 +550,8 @@ function M.open(task, on_save, opts)
             end, { buffer = target.component.bufnr, silent = true })
         end
         vim.keymap.set("n", "q", request_close, { buffer = target.component.bufnr, silent = true })
+        -- Normal-mode Esc only; insert-mode Esc must still leave insert.
+        vim.keymap.set("n", "<Esc>", request_close, { buffer = target.component.bufnr, silent = true })
     end
 
     local function choose_recurrence(index)
@@ -612,7 +625,7 @@ function M.open(task, on_save, opts)
     end, { buffer = components.recurrence.bufnr })
 
     local size =
-    { width = math.max(48, math.min(92, vim.o.columns - 4)), height = math.max(24, math.min(31, vim.o.lines - 4)) }
+        { width = math.max(48, math.min(92, vim.o.columns - 4)), height = math.max(24, math.min(31, vim.o.lines - 4)) }
     owner.layout = Layout(
         { relative = "editor", position = "50%", size = size },
         Layout.Box({

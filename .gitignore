@@ -3,3 +3,8 @@ cache/
 .idea
 .vscode
 *.log
+
+# ai
+.agent/
+.claude/
+.codex/

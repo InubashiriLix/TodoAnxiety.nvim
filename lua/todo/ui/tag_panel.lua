@@ -137,6 +137,10 @@ local function input_dialog(owner, title, default_value, on_submit)
     end
     vim.keymap.set({ "n", "i" }, "<C-q>", close_input, { buffer = component.bufnr, silent = true })
     vim.keymap.set("n", "q", close_input, { buffer = component.bufnr, silent = true })
+    vim.keymap.set("n", "<Esc>", close_input, { buffer = component.bufnr, silent = true })
+    vim.keymap.set("i", "<Esc>", function()
+        vim.schedule(close_input)
+    end, { buffer = component.bufnr, silent = true })
 end
 
 local function create_tag(owner)
@@ -224,6 +228,7 @@ local function delete_tag(owner)
         end
     end
     vim.keymap.set("n", "q", close_menu, { buffer = menu.bufnr, silent = true })
+    vim.keymap.set("n", "<Esc>", close_menu, { buffer = menu.bufnr, silent = true })
     vim.keymap.set("n", "<C-q>", close_menu, { buffer = menu.bufnr, silent = true })
 end
 
@@ -243,8 +248,10 @@ render = function(owner)
     owner.cursor = math.max(1, math.min(owner.cursor, math.max(1, #owner.visible)))
     local width = vim.api.nvim_win_get_width(owner.popup.winid)
     local lines = {
-        viewmodel.truncate("  " .. i18n.t(owner.select_mode and "tag_panel_select_help" or "tag_panel_manage_help"),
-            width),
+        viewmodel.truncate(
+            "  " .. i18n.t(owner.select_mode and "tag_panel_select_help" or "tag_panel_manage_help"),
+            width
+        ),
         owner.filter ~= "" and viewmodel.truncate("  / " .. owner.filter, width) or "",
         "",
     }
@@ -380,6 +387,7 @@ function M.open(opts)
         filter_tags(owner)
     end)
     map("q", M.close)
+    map("<Esc>", M.close)
     map("<C-q>", M.close)
     return owner
 end

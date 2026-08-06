@@ -1,4 +1,5 @@
 local config = require("todo.config")
+local grouping = require("todo.ui.grouping")
 local highlights = require("todo.ui.highlights")
 local i18n = require("todo.i18n")
 local form = require("todo.ui.form")
@@ -21,11 +22,23 @@ local state = {
     stats = { active = 0, emergency = 0, notices = 0, archived = 0 },
     filters = {},
     selected_id = nil,
+    rows = {},
+    cursor_row = 1,
+    collapsed = {},
     task_order = {},
     task_lines = {},
     tab_spans = {},
     tab_line = 1,
 }
+
+local function collapsed_map()
+    state.collapsed[state.view] = state.collapsed[state.view] or {}
+    return state.collapsed[state.view]
+end
+
+local function current_row()
+    return state.rows[state.cursor_row]
+end
 
 local function service()
     return require("todo")._service()
@@ -136,30 +149,50 @@ local function filter_summary()
     return bits
 end
 
-local function header_content(compact, width)
-    local line = compact and ("  TODO.NVIM · " .. i18n.t(state.view)) or "  TODO.NVIM  "
-    local spans = {}
-    local tabs = compact and " " or line
-    for _, view in ipairs({ "active", "emergency", "notices", "archived" }) do
+--- Lay the seven view tabs out over as many lines as the width needs.
+--- Returns the tab lines plus spans carrying the line each tab landed on.
+local function tab_layout(compact, width, first_line, first_prefix)
+    local continuation = string.rep(" ", vim.fn.strdisplaywidth(first_prefix))
+    local lines, spans = {}, {}
+    local current, line_index, prefix = first_prefix, first_line, first_prefix
+    for _, view in ipairs(grouping.views) do
         local label = i18n.t(compact and (view .. "_short") or view)
-        local text = string.format("[ %s %d ]", label, state.stats[view] or 0)
-        local from = #tabs
-        tabs = tabs .. text .. " "
-        spans[#spans + 1] = { from = from, to = from + #text, view = view }
+        local text = grouping.counted[view] and string.format("[ %s %d ]", label, state.stats[view] or 0)
+            or string.format("[ %s ]", label)
+        if current ~= prefix and vim.fn.strdisplaywidth(current .. text) > width then
+            lines[#lines + 1] = current
+            line_index = line_index + 1
+            prefix = continuation
+            current = prefix
+        end
+        local from = #current
+        current = current .. text .. " "
+        spans[#spans + 1] = { from = from, to = from + #text, view = view, line = line_index }
     end
+    lines[#lines + 1] = current
+    return lines, spans
+end
+
+local function header_content(compact, width)
+    width = width or 200
     local filters = filter_summary()
     if compact then
-        local result = {
-            viewmodel.truncate(line, width),
-            viewmodel.truncate(tabs, width),
-        }
+        local title = "  TODO.NVIM · " .. i18n.t(state.view)
+        local tab_lines, spans = tab_layout(true, width, 2, " ")
+        local result = { viewmodel.truncate(title, width) }
+        for _, line in ipairs(tab_lines) do
+            result[#result + 1] = viewmodel.truncate(line, width)
+        end
         if #filters > 0 then
             result[#result + 1] = viewmodel.truncate("  " .. table.concat(filters, "   "), width)
         end
         return result, spans, 2
     end
-    local second = #filters > 0 and ("  " .. table.concat(filters, "   ")) or ("  / " .. i18n.t("search_placeholder"))
-    return { tabs, second }, spans, 1
+    local tab_lines, spans = tab_layout(false, width, 1, "  TODO.NVIM  ")
+    local result = vim.deepcopy(tab_lines)
+    result[#result + 1] = #filters > 0 and ("  " .. table.concat(filters, "   "))
+        or ("  / " .. i18n.t("search_placeholder"))
+    return result, spans, 1
 end
 
 local function urgency_label(task)
@@ -173,18 +206,31 @@ end
 
 local function list_content(width)
     local lines, mappings, order, decorations = {}, {}, {}, {}
-    local sections = viewmodel.sections(state.tasks, state.view)
-    for _, section in ipairs(sections) do
-        lines[#lines + 1] = string.format("  %s  %d", section.label, #section.tasks)
-        decorations[#decorations + 1] = { line = #lines - 1, from = 2, to = #lines[#lines], group = "TodoHeader" }
-        for _, task in ipairs(section.tasks) do
-            local line1, line2 = viewmodel.card(task, math.max(10, width - 3), urgency_label(task))
+    local relative = state.view == "by_time"
+    local rows = state.rows
+    for index, row in ipairs(rows) do
+        if row.kind == "section" then
+            local marker = row.collapsed and "▸" or "▾"
+            local indent = string.rep("  ", row.depth)
+            lines[#lines + 1] = string.format("  %s%s %s  %d", indent, marker, row.label, row.count)
+            local group = row.tag and highlights.tag(row.tag) or "TodoHeader"
+            decorations[#decorations + 1] = { line = #lines - 1, from = 2, to = #lines[#lines], group = group }
+            mappings[#lines] = row
+            if index == state.cursor_row then
+                decorations[#decorations + 1] =
+                    { line = #lines - 1, from = 0, to = -1, group = "TodoSelected", whole = true }
+            end
+        else
+            local task = row.task
+            local indent = string.rep("  ", row.depth)
+            local line1, line2 =
+                viewmodel.card(task, math.max(10, width - 3 - #indent), urgency_label(task), { relative = relative })
             local first = #lines + 1
-            lines[#lines + 1] = " " .. line1
-            lines[#lines + 1] = " " .. line2
+            lines[#lines + 1] = " " .. indent .. line1
+            lines[#lines + 1] = " " .. indent .. line2
             lines[#lines + 1] = ""
-            mappings[first] = task
-            mappings[first + 1] = task
+            mappings[first] = row
+            mappings[first + 1] = row
             order[#order + 1] = task
             local priority_start = lines[first]:find("P" .. task.priority, 1, true)
             if priority_start then
@@ -207,9 +253,11 @@ local function list_content(width)
                     }
                 end
             end
-            if task.id == state.selected_id then
-                decorations[#decorations + 1] = { line = first - 1, from = 0, to = -1, group = "TodoSelected", whole = true }
-                decorations[#decorations + 1] = { line = first, from = 0, to = -1, group = "TodoSelected", whole = true }
+            if index == state.cursor_row then
+                decorations[#decorations + 1] =
+                    { line = first - 1, from = 0, to = -1, group = "TodoSelected", whole = true }
+                decorations[#decorations + 1] =
+                    { line = first, from = 0, to = -1, group = "TodoSelected", whole = true }
             end
         end
     end
@@ -264,7 +312,9 @@ local function detail_content(task)
     lines[#lines + 1] = " " .. i18n.t("description")
     lines[#lines + 1] = ""
     for _, line in
-    ipairs(vim.split(task.description ~= "" and task.description or i18n.t("no_description"), "\n", { plain = true }))
+        ipairs(
+            vim.split(task.description ~= "" and task.description or i18n.t("no_description"), "\n", { plain = true })
+        )
     do
         lines[#lines + 1] = " " .. line
     end
@@ -282,7 +332,7 @@ local function detail_content(task)
     local description_index = info and 9 or 8
     return lines,
         {
-            { line = 0,                     from = 1, to = #lines[1],                 group = "TodoHeader" },
+            { line = 0, from = 1, to = #lines[1], group = "TodoHeader" },
             { line = description_index - 1, from = 1, to = #lines[description_index], group = "TodoHeader" },
         }
 end
@@ -306,15 +356,15 @@ end
 local function footer_text(compact)
     local line = " "
     local items = compact
-        and {
-            { key = "a", label = "+" },
-            { key = "n", label = "󰀠" },
-            { key = "e", label = "✎" },
-            { key = "x", label = "✓" },
-            { key = "/", label = "" },
-            { key = "f", label = "" },
-            { key = "?", label = "" },
-        }
+            and {
+                { key = "a", label = "+" },
+                { key = "n", label = "󰀠" },
+                { key = "e", label = "✎" },
+                { key = "x", label = "✓" },
+                { key = "/", label = "" },
+                { key = "f", label = "" },
+                { key = "?", label = "" },
+            }
         or {
             { key = "a", label = i18n.t("action_add") },
             { key = "n", label = i18n.t("notice") },
@@ -340,9 +390,10 @@ local function focus_selected(owner)
     if not win or not vim.api.nvim_win_is_valid(win) then
         return
     end
+    local target = current_row()
     local selected_line
-    for line, task in pairs(state.task_lines) do
-        if task.id == state.selected_id then
+    for line, row in pairs(state.task_lines) do
+        if row == target then
             selected_line = not selected_line and line or math.min(selected_line, line)
         end
     end
@@ -357,15 +408,26 @@ end
 local render
 
 local function render_float(owner)
-    local header, spans, tab_line = header_content()
+    local header, spans, tab_line = header_content(false, vim.api.nvim_win_get_width(owner.header.winid))
+    -- Counts can gain a digit while open and push tabs onto an extra line; the
+    -- header box was sized at mount, so drop anything that no longer fits.
+    local room = vim.api.nvim_win_get_height(owner.header.winid)
+    while #header > room do
+        table.remove(header)
+    end
     state.tab_spans, state.tab_line = spans, tab_line
     set_buffer(owner.header.bufnr, header)
     add_hl(owner.header.bufnr, 0, 2, 11, "TodoHeader")
     for _, span in ipairs(spans) do
-        add_hl(owner.header.bufnr, 0, span.from, span.to,
-            span.view == state.view and "TodoTabActive" or "TodoTabInactive")
+        add_hl(
+            owner.header.bufnr,
+            span.line - 1,
+            span.from,
+            span.to,
+            span.view == state.view and "TodoTabActive" or "TodoTabInactive"
+        )
     end
-    add_hl(owner.header.bufnr, 1, 0, #header[2], "TodoMuted")
+    add_hl(owner.header.bufnr, #header - 1, 0, #header[#header], "TodoMuted")
 
     local width = vim.api.nvim_win_get_width(owner.list.winid)
     local lines, mappings, order, decorations = list_content(width)
@@ -388,28 +450,29 @@ local function render_sidebar(owner)
     local width = vim.api.nvim_win_get_width(owner.split.winid)
     local header, spans, tab_line = header_content(true, width)
     state.tab_spans, state.tab_line = spans, tab_line
+    local filtered = #filter_summary() > 0
     local list_lines, mappings, order, decorations = list_content(width)
     local lines = vim.list_extend(vim.deepcopy(header), { "" })
     local list_offset = #lines
     vim.list_extend(lines, list_lines)
     lines[#lines + 1] = footer_text(true)
     state.task_lines, state.task_order = {}, order
-    for line, task in pairs(mappings) do
-        state.task_lines[line + list_offset] = task
+    for line, row in pairs(mappings) do
+        state.task_lines[line + list_offset] = row
     end
     set_buffer(owner.split.bufnr, lines)
     add_hl(owner.split.bufnr, 0, 2, 11, "TodoHeader")
     for _, span in ipairs(spans) do
         add_hl(
             owner.split.bufnr,
-            tab_line - 1,
+            span.line - 1,
             span.from,
             span.to,
             span.view == state.view and "TodoTabActive" or "TodoTabInactive"
         )
     end
-    if #header > 2 then
-        add_hl(owner.split.bufnr, 2, 0, -1, "TodoMuted")
+    if filtered then
+        add_hl(owner.split.bufnr, #header - 1, 0, -1, "TodoMuted")
     end
     apply_decorations(owner.split.bufnr, decorations, list_offset)
     add_hl(owner.split.bufnr, #lines - 1, 0, -1, "TodoMuted")
@@ -428,9 +491,37 @@ render = function()
         return
     end
     state.tasks, state.stats = tasks, stats
-    if not selected_task() then
-        state.selected_id = tasks[1] and tasks[1].id or nil
+    state.rows = grouping.rows(grouping.sections(tasks, state.view), collapsed_map())
+    -- Keep the cursor on the previously selected task when it is still visible.
+    local target
+    for index, row in ipairs(state.rows) do
+        if row.kind == "task" and row.task.id == state.selected_id then
+            target = target or index
+        end
     end
+    if not target then
+        for index, row in ipairs(state.rows) do
+            if row.kind == "task" then
+                target = index
+                break
+            end
+        end
+    end
+    state.cursor_row = target or 1
+    local row = current_row()
+    if row and row.kind == "task" then
+        state.selected_id = row.task.id
+    elseif not selected_task() then
+        state.selected_id = nil
+    end
+    if state.owner.split then
+        render_sidebar(state.owner)
+    else
+        render_float(state.owner)
+    end
+end
+
+local function repaint()
     if state.owner.split then
         render_sidebar(state.owner)
     else
@@ -439,32 +530,25 @@ render = function()
 end
 
 local function select_delta(delta)
-    if #state.task_order == 0 then
+    if #state.rows == 0 then
         return
     end
-    local current_index = 1
-    for index, task in ipairs(state.task_order) do
-        if task.id == state.selected_id then
-            current_index = index
-            break
-        end
+    state.cursor_row = math.max(1, math.min(#state.rows, state.cursor_row + delta))
+    local row = current_row()
+    if row and row.kind == "task" then
+        state.selected_id = row.task.id
     end
-    current_index = math.max(1, math.min(#state.task_order, current_index + delta))
-    state.selected_id = state.task_order[current_index].id
-    if state.owner.split then
-        render_sidebar(state.owner)
-    else
-        render_float(state.owner)
-    end
+    repaint()
 end
 
 local function change_view(view)
     state.view, state.selected_id = view, nil
+    state.cursor_row = 1
     render()
 end
 
 local function cycle_view(delta)
-    local views = { "active", "emergency", "notices", "archived" }
+    local views = grouping.views
     local index = 1
     for i, view in ipairs(views) do
         if view == state.view then
@@ -473,6 +557,45 @@ local function cycle_view(delta)
         end
     end
     change_view(views[(index - 1 + delta) % #views + 1])
+end
+
+--- Section key whose fold the cursor should toggle: the header itself, or the
+--- section the highlighted task belongs to.
+local function cursor_section_key()
+    local row = current_row()
+    if not row then
+        return nil
+    end
+    return row.kind == "section" and row.key or row.section_key
+end
+
+local function toggle_fold()
+    local key = cursor_section_key()
+    if not key then
+        return
+    end
+    local collapsed = collapsed_map()
+    collapsed[key] = not collapsed[key] or nil
+    -- Land on the section header so repeated presses stay predictable.
+    state.rows = grouping.rows(grouping.sections(state.tasks, state.view), collapsed)
+    for index, row in ipairs(state.rows) do
+        if row.kind == "section" and row.key == key then
+            state.cursor_row = index
+            break
+        end
+    end
+    repaint()
+end
+
+local function set_all_folds(value)
+    local collapsed = collapsed_map()
+    local sections = grouping.sections(state.tasks, state.view)
+    for _, section in ipairs(sections) do
+        collapsed[section.key] = value or nil
+    end
+    state.rows = grouping.rows(sections, collapsed)
+    state.cursor_row = math.max(1, math.min(#state.rows, state.cursor_row))
+    repaint()
 end
 
 local function open_task_form(task, save_task)
@@ -555,7 +678,7 @@ local function edit_task()
     end
     if task.kind == "notice" then
         local reopen =
-        { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
+            { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
         M.close()
         require("todo.ui.notice_form").open(task, function(input)
             local result, errors = service():update(task.id, input)
@@ -653,6 +776,12 @@ local function menu(owner, title, items, on_submit)
     })
     owner.transient = component
     component:mount()
+    local dismiss = function()
+        close_transient(owner)
+        focus_list(owner)
+    end
+    vim.keymap.set("n", "<Esc>", dismiss, { buffer = component.bufnr, silent = true })
+    vim.keymap.set("n", "q", dismiss, { buffer = component.bufnr, silent = true })
 end
 
 local function delete_archived_task()
@@ -665,7 +794,7 @@ local function delete_archived_task()
         return
     end
     menu(state.owner, i18n.t("delete_task_title"), {
-        { label = i18n.t("cancel"),                                   value = false },
+        { label = i18n.t("cancel"), value = false },
         { label = i18n.t("delete_task_confirm", task.id, task.title), value = true },
     }, function(confirmed)
         if not confirmed then
@@ -687,10 +816,10 @@ end
 local function open_filter()
     local owner = state.owner
     menu(owner, i18n.t("filter"), {
-        { label = i18n.t("status"),   value = "status" },
+        { label = i18n.t("status"), value = "status" },
         { label = i18n.t("priority"), value = "priority" },
-        { label = i18n.t("tags"),     value = "tag" },
-        { label = i18n.t("clear"),    value = "clear" },
+        { label = i18n.t("tags"), value = "tag" },
+        { label = i18n.t("clear"), value = "clear" },
     }, function(kind)
         if kind == "clear" then
             state.filters = {}
@@ -721,6 +850,14 @@ local function open_filter()
     end)
 end
 
+--- Put the cursor back on the list/sidebar window after a transient closes.
+local function focus_list(owner)
+    local win = owner.split and owner.split.winid or (owner.list and owner.list.winid)
+    if win and vim.api.nvim_win_is_valid(win) then
+        pcall(vim.api.nvim_set_current_win, win)
+    end
+end
+
 local function open_search()
     local owner = state.owner
     close_transient(owner)
@@ -749,6 +886,22 @@ local function open_search()
     })
     owner.transient = search
     search:mount()
+    -- Esc from either mode abandons the search: clear the query, drop the input,
+    -- hand the cursor back to the list.
+    local abandon = function()
+        state.filters.search = nil
+        close_transient(owner)
+        render()
+        focus_list(owner)
+    end
+    vim.keymap.set("n", "<Esc>", abandon, { buffer = search.bufnr, silent = true })
+    vim.keymap.set("i", "<Esc>", function()
+        vim.schedule(abandon)
+    end, { buffer = search.bufnr, silent = true })
+    vim.keymap.set({ "n", "i" }, "<C-q>", function()
+        vim.schedule(abandon)
+    end, { buffer = search.bufnr, silent = true })
+    vim.keymap.set("n", "q", abandon, { buffer = search.bufnr, silent = true })
     vim.api.nvim_create_autocmd("WinLeave", {
         buffer = search.bufnr,
         once = true,
@@ -796,8 +949,10 @@ local function show_help()
     local close = function()
         help:unmount()
         owner.transient = nil
+        focus_list(owner)
     end
     vim.keymap.set("n", "q", close, { buffer = help.bufnr })
+    vim.keymap.set("n", "<Esc>", close, { buffer = help.bufnr })
 end
 
 local function render_overlay(overlay)
@@ -849,8 +1004,10 @@ local function open_details()
     local close = function()
         overlay:unmount()
         owner.detail_overlay = nil
+        focus_list(owner)
     end
     vim.keymap.set("n", "q", close, { buffer = overlay.bufnr })
+    vim.keymap.set("n", "<Esc>", close, { buffer = overlay.bufnr })
     vim.keymap.set("n", "e", edit_task, { buffer = overlay.bufnr })
     vim.keymap.set("n", "s", function()
         change_status("in_progress")
@@ -868,6 +1025,23 @@ local function set_mappings(component, role)
         return { buffer = buf, silent = true, desc = desc }
     end
     vim.keymap.set("n", "q", M.close, opts("Close todo dashboard"))
+    -- Esc peels one layer: active filters first, then the panel itself.
+    vim.keymap.set("n", "<Esc>", function()
+        if #filter_summary() > 0 then
+            state.filters = {}
+            render()
+        else
+            M.close()
+        end
+    end, opts("Clear filters or close dashboard"))
+    vim.keymap.set("n", "<Tab>", toggle_fold, opts("Toggle section"))
+    vim.keymap.set("n", "za", toggle_fold, opts("Toggle section"))
+    vim.keymap.set("n", "zM", function()
+        set_all_folds(true)
+    end, opts("Collapse all sections"))
+    vim.keymap.set("n", "zR", function()
+        set_all_folds(false)
+    end, opts("Expand all sections"))
     vim.keymap.set("n", "j", function()
         select_delta(1)
     end, opts("Next task"))
@@ -910,12 +1084,11 @@ local function set_mappings(component, role)
         cycle_view(1)
     end, opts("Next view"))
     vim.keymap.set("n", "v", function()
-        menu(state.owner, i18n.t("filter"), {
-            { label = i18n.t("active"),    value = "active" },
-            { label = i18n.t("emergency"), value = "emergency" },
-            { label = i18n.t("notices"),   value = "notices" },
-            { label = i18n.t("archived"),  value = "archived" },
-        }, change_view)
+        local items = {}
+        for _, view in ipairs(grouping.views) do
+            items[#items + 1] = { label = i18n.t(view), value = view }
+        end
+        menu(state.owner, i18n.t("view"), items, change_view)
     end, opts("Choose view"))
     vim.keymap.set("n", "<CR>", open_details, opts("Open details"))
     if role == "list" and state.owner and state.owner.detail then
@@ -954,6 +1127,8 @@ local function create_float(owner)
     local width = math.max(10, math.min(vim.o.columns - 4, math.floor(vim.o.columns * cfg.width)))
     local height = math.max(6, math.min(vim.o.lines - 4, math.floor((vim.o.lines - 2) * cfg.height)))
     owner.wide = width >= 100
+    -- Tabs wrap when they cannot fit, so the header box grows with them.
+    local header_lines = select(1, header_content(false, width))
     owner.header = base_popup(nil, { border = false })
     owner.list = base_popup(i18n.t(state.view), { enter = true })
     owner.footer = base_popup(nil, { border = false })
@@ -970,7 +1145,7 @@ local function create_float(owner)
     owner.layout = Layout(
         { relative = "editor", position = "50%", size = { width = width, height = height } },
         Layout.Box({
-            Layout.Box(owner.header, { size = 2 }),
+            Layout.Box(owner.header, { size = math.max(2, #header_lines) }),
             body,
             Layout.Box(owner.footer, { size = 1 }),
         }, { dir = "col" })
@@ -1009,6 +1184,11 @@ function M.open(opts)
     state.view = opts.view or config.get().ui.default_view
     state.filters = opts.filters or state.filters or {}
     state.selected_id = opts.selected_id or state.selected_id
+    -- Header height depends on the tab counts, so read stats before laying out.
+    local ok, stats = pcall(function()
+        return service():stats()
+    end)
+    state.stats = ok and stats or state.stats
     local owner = { closed = false, transient = nil, mode = state.mode }
     state.owner = owner
     if state.mode == "sidebar" then
@@ -1124,7 +1304,7 @@ function M.edit(id)
     end
     if task.kind == "notice" then
         local reopen =
-        { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
+            { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
         M.close()
         require("todo.ui.notice_form").open(task, function(input)
             local result, errors = service():update(task.id, input)
