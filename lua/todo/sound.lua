@@ -10,8 +10,8 @@ end
 
 local function detected_command()
     for _, candidate in ipairs({
-        { "mpv",    "--no-video", "--really-quiet" },
-        { "ffplay", "-nodisp",    "-autoexit",     "-loglevel", "quiet" },
+        { "mpv", "--no-video", "--really-quiet" },
+        { "ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet" },
         { "paplay" },
         { "afplay" },
     }) do

@@ -56,9 +56,9 @@ local function validate(opts)
         ui_default_view = {
             opts.ui.default_view,
             function(v)
-                return v == "active" or v == "emergency" or v == "notices" or v == "archived"
+                return require("todo.ui.grouping").is_view(v)
             end,
-            "'active', 'emergency', 'notices', or 'archived'",
+            "'active', 'emergency', 'by_urgency', 'by_time', 'by_tag', 'notices', or 'archived'",
         },
         keymaps = { opts.keymaps, "table" },
         icons = { opts.icons, "table" },

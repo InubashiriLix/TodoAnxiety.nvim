@@ -172,14 +172,14 @@ function M.open(task, on_save, opts)
     owner.components = components
 
     focusables = {
-        { component = components.title,             insert = true },
-        { component = components.priority,          insert = false },
-        { component = components.status,            insert = false },
-        { component = components.deadline,          insert = false },
+        { component = components.title, insert = true },
+        { component = components.priority, insert = false },
+        { component = components.status, insert = false },
+        { component = components.deadline, insert = false },
         { component = components.reminder_interval, insert = true },
-        { component = components.tag_input,         insert = true },
-        { component = components.description,       insert = true },
-        { component = components.footer,            insert = false },
+        { component = components.tag_input, insert = true },
+        { component = components.description, insert = true },
+        { component = components.footer, insert = false },
     }
 
     local function focus(index)
@@ -190,8 +190,11 @@ function M.open(task, on_save, opts)
         if previous == 1 then
             local invalid = vim.trim(state:get("title")) == ""
             components.title.border:set_highlight(invalid and "TodoError" or "TodoBorder")
-            components.title.border:set_text("bottom", invalid and (" " .. i18n.t("title_required") .. " ") or "",
-                "right")
+            components.title.border:set_text(
+                "bottom",
+                invalid and (" " .. i18n.t("title_required") .. " ") or "",
+                "right"
+            )
         elseif previous == 6 and tag_pending ~= "" and commit_tag then
             commit_tag()
         end
@@ -218,7 +221,8 @@ function M.open(task, on_save, opts)
             line:append(" ")
             for value = 0, 3 do
                 local priority = "P" .. value
-                local text = state:get("priority") == priority and ("[" .. priority .. "] ") or (" " .. priority .. "  ")
+                local text = state:get("priority") == priority and ("[" .. priority .. "] ")
+                    or (" " .. priority .. "  ")
                 line:append(Text(text, "TodoPriority" .. value))
             end
             line:render(components.priority.bufnr, components.priority.ns_id, 1)
@@ -474,6 +478,7 @@ function M.open(task, on_save, opts)
             close_time()
         end)
         map("q", close_time)
+        map("<Esc>", close_time)
         map("<C-q>", close_time)
         owner.apply_time = apply_time
     end
@@ -535,11 +540,16 @@ function M.open(task, on_save, opts)
                     and calendar.month == calendar.today.month
                     and span.day == calendar.today.day
                 if is_selected or is_today then
-                    vim.api.nvim_buf_set_extmark(calendar_popup.bufnr, calendar_popup.ns_id, span.line - 1, span.from - 1,
+                    vim.api.nvim_buf_set_extmark(
+                        calendar_popup.bufnr,
+                        calendar_popup.ns_id,
+                        span.line - 1,
+                        span.from - 1,
                         {
                             end_col = span.to,
                             hl_group = is_selected and "TodoSelected" or "TodoStatusInProgress",
-                        })
+                        }
+                    )
                 end
             end
         end
@@ -608,6 +618,7 @@ function M.open(task, on_save, opts)
             open_time_picker(calendar)
         end)
         map("q", close_calendar)
+        map("<Esc>", close_calendar)
         map("<C-q>", close_calendar)
     end
     owner.open_calendar = open_calendar
@@ -802,8 +813,8 @@ function M.open(task, on_save, opts)
             owner,
             i18n.t("unsaved_title"),
             {
-                { label = i18n.t("save"),             value = "save" },
-                { label = i18n.t("discard"),          value = "discard" },
+                { label = i18n.t("save"), value = "save" },
+                { label = i18n.t("discard"), value = "discard" },
                 { label = i18n.t("continue_editing"), value = "continue" },
             },
             nil,
@@ -840,6 +851,8 @@ function M.open(task, on_save, opts)
             end)
         end, { buffer = component.bufnr })
         vim.keymap.set("n", "q", request_close, { buffer = component.bufnr })
+        -- Normal-mode Esc only; insert-mode Esc must still leave insert.
+        vim.keymap.set("n", "<Esc>", request_close, { buffer = component.bufnr })
         vim.keymap.set("n", "<C-q>", request_close, { buffer = component.bufnr })
         vim.keymap.set("i", "<C-q>", function()
             vim.schedule(request_close)

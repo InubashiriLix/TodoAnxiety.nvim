@@ -67,7 +67,7 @@ lazy.nvim 安装示例：
 所有命令都通过统一的 `:Todo` 入口调用：
 
 ```text
-open [float|sidebar] [active|emergency|notices|archived]
+open [float|sidebar] [active|emergency|by_urgency|by_time|by_tag|notices|archived]
 toggle [float|sidebar]
 add [title]
 notice [title]
@@ -107,8 +107,31 @@ dashboard 底部会显示当前上下文的常用操作，按 `?` 可以查看�
 ## Dashboard 与任务表单
 
 浮动 dashboard 在可用宽度达到 100 列时使用左侧任务列表、右侧固定详情的布局。
-窄浮窗和侧栏使用清晰的两行任务卡，按 Enter 为选中任务打开详情浮窗。活动视图
-按状态分组，紧急视图继续按紧急度排序。
+窄浮窗和侧栏使用清晰的两行任务卡，按 Enter 为选中任务打开详情浮窗。
+
+### 视图
+
+共有七个标签页：`[` 和 `]` 循环切换，`v` 打开选择菜单，当前标签在标题栏高亮。
+窗口宽度不足时，标签会自动折行到标题栏的下一行。
+
+| 标签页 | 分组方式 |
+| --- | --- |
+| 活动任务 | 全部任务按状态分组 |
+| 紧急任务 | 仅紧急候选任务，按紧急度排序的平铺列表 |
+| 按紧急程度 | 全部未完成任务按紧急档位分组：已逾期、紧急、较急、需关注、仅优先级 |
+| 按剩余时间 | 全部未完成任务按剩余时间排序，分为已逾期、今日到期、本周到期、更晚到期、无截止时间；卡片显示 `剩余 3d 4h` 这类相对标签 |
+| 按标签 | 树形视图，每个标签一个根节点，另有“未分类”；带多个标签的任务会出现在每个标签下 |
+| 提醒事项 | 按下次触发时间排序 |
+| 已归档 | 已归档任务，最新在前 |
+
+所有分组标题都可折叠：`<Tab>` 或 `za` 折叠光标所在分组，`zR` 全部展开，
+`zM` 全部折叠。折叠状态按视图分别记录，面板保持打开期间一直有效。`j` 和 `k`
+会同时经过分组标题和任务，因此标签视图可以像树一样浏览。搜索以及状态、
+优先级、标签筛选在任意视图上都继续生效。
+
+Escape 每次只回退一层：在搜索框中（Normal 或 Insert 模式均可）清除搜索词、
+关闭输入框并把光标交还列表；在菜单、帮助浮窗或详情浮窗中关闭该窗口；在列表中
+先清除当前筛选，没有筛选时才关闭面板。
 
 Notice 用于“5 分钟后洗澡”这类需要持续催促的日常事项。使用 `:Todo notice [标题]`
 创建，在触发时间中直接输入 `30s`、`5m`、`2h` 或准确日期；Normal 模式按 `c`
@@ -135,8 +158,9 @@ N 分钟、小时或天。重复提醒间隔会预填上一次使用的值；在
   标签前会确认；删除只会解除所有任务上的该标签，不会删除任务
 - 可正常换行的独立多行描述编辑器
 
-使用 Tab 和 Shift-Tab 在字段间移动，`<C-s>` 保存；Normal 模式按 `q`，或在
-任意模式按 `<C-q>` 关闭。Esc 只退出 Insert 模式，永远不会关闭表单。有未保存内容时，
+使用 Tab 和 Shift-Tab 在字段间移动，`<C-s>` 保存；Normal 模式按 `q` 或 Esc，
+或在任意模式按 `<C-q>` 关闭。Insert 模式下 Esc 仍然只退出 Insert，不会关闭正在
+输入的字段。有未保存内容时，
 表单会询问保存、放弃或继续编辑。todo.nvim 不再注册任何鼠标映射，所有操作只有
 一套明确可见的键盘路径。从 dashboard 打开
 表单时，原面板会暂时收起，并在表单关闭后恢复，不会出现两个界面互相重叠。
@@ -149,7 +173,9 @@ require("todo").setup({
   language = "zh-CN", -- "en" 或 "zh-CN"
   ui = {
     default_mode = "float", -- "float" 或 "sidebar"
-    default_view = "active", -- "active"、"emergency"、"notices" 或 "archived"
+    -- "active"、"emergency"、"by_urgency"、"by_time"、"by_tag"、"notices"
+    -- 或 "archived"
+    default_view = "active",
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },

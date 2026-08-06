@@ -22,8 +22,11 @@ end
 local function eq(actual, expected, message)
     if not vim.deep_equal(actual, expected) then
         error(
-            (message or "values differ") ..
-            "\nexpected: " .. vim.inspect(expected) .. "\nactual: " .. vim.inspect(actual)
+            (message or "values differ")
+            .. "\nexpected: "
+            .. vim.inspect(expected)
+            .. "\nactual: "
+            .. vim.inspect(actual)
         )
     end
 end
@@ -178,6 +181,7 @@ test("command completion distinguishes subcommands and arguments", function()
     eq(commands.complete("ta", ":Todo ta"), { "tags" })
     eq(commands.complete("s", ":Todo open s"), { "sidebar" })
     eq(commands.complete("del", ":Todo del"), { "delete" })
+    eq(commands.complete("by_", ":Todo open by_"), { "by_urgency", "by_time", "by_tag" })
 end)
 
 test("plugin UI source contains no mouse or Ctrl-Space mappings", function()
@@ -406,6 +410,97 @@ test("dashboard viewmodel groups statuses and truncates Unicode", function()
     assert(vim.endswith(truncated, "…"))
 end)
 
+test("grouping buckets tasks by urgency, time remaining, and tag", function()
+    local grouping = require("todo.ui.grouping")
+    require("todo.config").setup({ language = "en" })
+    local now = os.time({ year = 2026, month = 8, day = 6, hour = 12 })
+    local function at(offset)
+        return os.date("%Y-%m-%d", now + offset)
+    end
+    local tasks = {
+        {
+            id = 1,
+            title = "late",
+            status = "todo",
+            priority = 1,
+            tags = { "work" },
+            due_date = at(-3 * 86400),
+        },
+        { id = 2, title = "soon",   status = "in_progress", priority = 2, tags = { "work", "home" }, due_date = at(0) },
+        {
+            id = 3,
+            title = "week",
+            status = "todo",
+            priority = 2,
+            tags = {},
+            due_date = at(4 * 86400),
+        },
+        {
+            id = 4,
+            title = "far",
+            status = "todo",
+            priority = 3,
+            tags = { "home" },
+            due_date = at(30 * 86400),
+        },
+        { id = 5, title = "nodate", status = "todo",        priority = 3, tags = {} },
+    }
+
+    local keys = function(sections)
+        return vim.tbl_map(function(section)
+            return section.key
+        end, sections)
+    end
+
+    local by_time = grouping.sections(vim.deepcopy(tasks), "by_time", now)
+    eq(keys(by_time), { "overdue", "today", "this_week", "later", "no_deadline" })
+
+    local by_urgency = grouping.sections(vim.deepcopy(tasks), "by_urgency", now)
+    eq(by_urgency[1].key, "overdue")
+    -- Deadline-less tasks land in priority_only, urgency.calculate's label for them.
+    eq(keys(by_urgency)[#by_urgency], "priority_only")
+
+    local by_tag = grouping.sections(vim.deepcopy(tasks), "by_tag", now)
+    eq(keys(by_tag), { "tag:home", "tag:work", "untagged" })
+    -- A task with two tags appears under each of them.
+    eq(
+        vim.tbl_map(function(task)
+            return task.title
+        end, by_tag[1].tasks),
+        { "soon", "far" }
+    )
+    eq(#by_tag[2].tasks, 2)
+    eq(by_tag[1].depth, 1)
+
+    local rows = grouping.rows(by_tag, { ["tag:home"] = true })
+    eq(rows[1].kind, "section")
+    eq(rows[1].collapsed, true)
+    eq(rows[1].count, 2)
+    -- Collapsed section contributes no task rows; the next row is the next header.
+    eq(rows[2].kind, "section")
+    eq(rows[2].key, "tag:work")
+    eq(rows[3].kind, "task")
+    eq(rows[3].section_key, "tag:work")
+
+    eq(grouping.relative(now + 3 * 86400 + 4 * 3600, now), "in 3d 4h")
+    eq(grouping.relative(now - 2 * 86400, now), "overdue 2d")
+    eq(grouping.relative(nil, now), nil)
+    assert(grouping.is_view("by_tag") and not grouping.is_view("nonsense"))
+end)
+
+test("urgency.rank keeps non-candidates that urgency.sort drops", function()
+    local urgency = require("todo.urgency")
+    local tasks = {
+        { id = 1, title = "p3 no deadline", status = "todo", priority = 3 },
+        { id = 2, title = "p0 no deadline", status = "todo", priority = 0 },
+    }
+    eq(#urgency.sort(vim.deepcopy(tasks)), 1)
+    local ranked = urgency.rank(vim.deepcopy(tasks))
+    eq(#ranked, 2)
+    eq(ranked[1].title, "p0 no deadline")
+    assert(ranked[1].urgency.score > ranked[2].urgency.score)
+end)
+
 test("urgency combines deadline and priority deterministically", function()
     local urgency = require("todo.urgency")
     local now = os.time({ year = 2026, month = 8, day = 1, hour = 12, min = 0, sec = 0 })
@@ -507,6 +602,53 @@ local function memory_store(tasks)
 
     return store
 end
+
+test("service sorts the regrouped views and drops closed tasks", function()
+    local now = os.time({ year = 2026, month = 8, day = 6, hour = 12 })
+    local service = require("todo.service").new(memory_store({
+        {
+            id = 1,
+            title = "b",
+            description = "",
+            status = "todo",
+            priority = 2,
+            tags = {},
+            due_date = os.date("%Y-%m-%d", now + 5 * 86400),
+        },
+        {
+            id = 2,
+            title = "a",
+            description = "",
+            status = "todo",
+            priority = 2,
+            tags = {},
+            due_date = os.date("%Y-%m-%d", now + 86400),
+        },
+        { id = 3, title = "c", description = "", status = "done",      priority = 0, tags = {} },
+        { id = 4, title = "d", description = "", status = "cancelled", priority = 0, tags = {} },
+        { id = 5, title = "e", description = "", status = "todo",      priority = 0, tags = {} },
+    }))
+    local titles = function(view)
+        return vim.tbl_map(function(task)
+            return task.title
+        end, service:list(view, {}, now))
+    end
+    -- No deadline sorts last; done/cancelled never appear.
+    eq(titles("by_time"), { "a", "b", "e" })
+    -- by_tag orders by priority then title.
+    eq(titles("by_tag"), { "e", "a", "b" })
+    -- by_urgency keeps every open task, unlike the emergency view's filter.
+    eq(#titles("by_urgency"), 3)
+    eq(titles("by_urgency")[1], "a")
+    -- Filters still apply on top of the new views.
+    eq(titles("by_time"), { "a", "b", "e" })
+    eq(
+        vim.tbl_map(function(task)
+            return task.title
+        end, service:list("by_time", { search = "a" }, now)),
+        { "a" }
+    )
+end)
 
 test("service searches and combines filters", function()
     local store = memory_store({
@@ -675,6 +817,128 @@ if nui_ok then
         package.loaded.todo = nil
     end)
 
+    test("NUI dashboard folds tag sections and Esc unwinds search and filters", function()
+        require("todo.config").setup({ keymaps = { toggle = false }, ui = { default_mode = "float" } })
+        local fake_service = require("todo.service").new(memory_store({
+            {
+                id = 1,
+                title = "Alpha",
+                description = "",
+                status = "todo",
+                priority = 1,
+                tags = { "work" },
+                created_at = 1,
+            },
+            {
+                id = 2,
+                title = "Beta",
+                description = "",
+                status = "todo",
+                priority = 2,
+                tags = { "home" },
+                created_at = 2,
+            },
+        }))
+        package.loaded.todo = {
+            _service = function()
+                return fake_service
+            end,
+        }
+        package.loaded["todo.ui.panel"] = nil
+        local panel = require("todo.ui.panel")
+        panel.open({ mode = "float", view = "by_tag" })
+        vim.wait(20)
+        local state = panel.inspect_state()
+        eq(state.view, "by_tag")
+        eq(
+            vim.tbl_map(function(row)
+                return row.kind == "section" and row.key or row.task.title
+            end, state.rows),
+            { "tag:home", "Beta", "tag:work", "Alpha" }
+        )
+        -- Cursor starts on the first task row, not the section header.
+        eq(state.cursor_row, 2)
+        eq(state.selected_id, 2)
+
+        local list_win = state.owner.list.winid
+        vim.api.nvim_set_current_win(list_win)
+        -- Tab folds the section holding the highlighted task and lands on its header.
+        vim.fn.feedkeys("\t", "xt")
+        vim.wait(20)
+        eq(panel.inspect_state().collapsed.by_tag["tag:home"], true)
+        eq(panel.inspect_state().cursor_row, 1)
+        eq(
+            vim.tbl_map(function(row)
+                return row.kind == "section" and row.key or row.task.title
+            end, panel.inspect_state().rows),
+            { "tag:home", "tag:work", "Alpha" }
+        )
+        local folded_lines = vim.api.nvim_buf_get_lines(panel.inspect_state().owner.list.bufnr, 0, -1, false)
+        assert(
+            vim.iter(folded_lines):any(function(line)
+                return line:find("▸", 1, true) ~= nil
+            end),
+            "collapsed marker missing"
+        )
+        assert(not vim.iter(folded_lines):any(function(line)
+            return line:find("Beta", 1, true) ~= nil
+        end), "collapsed section still shows its tasks")
+
+        vim.fn.feedkeys("zR", "xt")
+        vim.wait(20)
+        eq(panel.inspect_state().collapsed.by_tag["tag:home"], nil)
+        vim.fn.feedkeys("zM", "xt")
+        vim.wait(20)
+        eq(#panel.inspect_state().rows, 2)
+
+        -- Esc in the search input clears the query and returns focus to the list.
+        vim.fn.feedkeys("zR", "xt")
+        vim.wait(20)
+        vim.fn.feedkeys("/", "xt")
+        assert(
+            vim.wait(100, function()
+                local transient = panel.inspect_state().owner.transient
+                return transient ~= nil and vim.api.nvim_get_current_win() == transient.winid
+            end),
+            "search input did not open"
+        )
+        vim.cmd("startinsert")
+        vim.fn.feedkeys("Alpha", "xt")
+        assert(
+            vim.wait(100, function()
+                local search = panel.inspect_state().filters.search
+                return search ~= nil and search ~= ""
+            end),
+            "typing did not populate the search filter"
+        )
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
+        assert(
+            vim.wait(200, function()
+                return panel.is_open()
+                    and panel.inspect_state().owner.transient == nil
+                    and panel.inspect_state().filters.search == nil
+            end),
+            "Esc should drop the search input and clear the query"
+        )
+        eq(vim.api.nvim_get_current_win(), panel.inspect_state().owner.list.winid)
+
+        -- Esc on the list clears remaining filters before it closes the panel.
+        panel.inspect_state().filters.tag = "work"
+        panel.refresh()
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
+        vim.wait(30)
+        assert(panel.is_open(), "first Esc should clear filters, not close")
+        eq(panel.inspect_state().filters, {})
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
+        assert(
+            vim.wait(200, function()
+                return not panel.is_open()
+            end),
+            "second Esc should close the dashboard"
+        )
+        package.loaded.todo = nil
+    end)
+
     test("NUI form mounts structured fields and closes cleanly", function()
         local fake_service = require("todo.service").new(memory_store({}))
         package.loaded.todo = {
@@ -822,7 +1086,13 @@ if nui_ok then
             })
         )
         vim.api.nvim_set_current_win(form_state.components.description.winid)
-        vim.api.nvim_buf_set_lines(form_state.components.description.bufnr, 0, -1, false, { "first line", "second line" })
+        vim.api.nvim_buf_set_lines(
+            form_state.components.description.bufnr,
+            0,
+            -1,
+            false,
+            { "first line", "second line" }
+        )
         vim.api.nvim_exec_autocmds("TextChanged", { buffer = form_state.components.description.bufnr })
         assert(
             vim.wait(100, function()
@@ -854,8 +1124,8 @@ if nui_ok then
         vim.fn.feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "xt")
         assert(
             vim.wait(100, function()
-                return notice_form.inspect_state() == state and
-                vim.api.nvim_get_current_win() == state.components.trigger.winid
+                return notice_form.inspect_state() == state
+                    and vim.api.nvim_get_current_win() == state.components.trigger.winid
             end),
             "Enter in a single-line notice field did not advance focus"
         )

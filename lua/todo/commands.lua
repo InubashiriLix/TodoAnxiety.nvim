@@ -42,7 +42,7 @@ function M.run(args)
                 if word == "float" or word == "sidebar" then
                     mode = word
                 end
-                if word == "active" or word == "emergency" or word == "notices" or word == "archived" then
+                if require("todo.ui.grouping").is_view(word) then
                     view = word
                 end
             end
@@ -106,7 +106,8 @@ function M.complete(arglead, cmdline)
         end, commands)
     end
     if command == "open" then
-        local options = { "float", "sidebar", "active", "emergency", "notices", "archived" }
+        local options = { "float", "sidebar" }
+        vim.list_extend(options, require("todo.ui.grouping").views)
         return vim.tbl_filter(function(item)
             return vim.startswith(item, arglead)
         end, options)
