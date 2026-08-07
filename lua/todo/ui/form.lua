@@ -26,17 +26,25 @@ end
 
 local function popup(label, opts)
     opts = opts or {}
-    return Popup({
+    local win_options = {
+        wrap = opts.wrap or false,
+        cursorline = opts.cursorline or false,
+        winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder,CursorLine:TodoSelected",
+    }
+    if opts.markdown then
+        win_options = vim.tbl_extend("force", win_options, require("todo.ui.markdown").win_options(true))
+    end
+    local component = Popup({
         enter = opts.enter or false,
         focusable = opts.focusable ~= false,
         border = opts.border == false and "none" or border(label),
         buf_options = { buftype = "nofile", bufhidden = "hide", swapfile = false, modifiable = true },
-        win_options = {
-            wrap = opts.wrap or false,
-            cursorline = opts.cursorline or false,
-            winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder,CursorLine:TodoSelected",
-        },
+        win_options = win_options,
     })
+    if opts.markdown then
+        require("todo.ui.markdown").attach(component.bufnr)
+    end
+    return component
 end
 
 local function input(label, value, on_change)
@@ -167,7 +175,7 @@ function M.open(task, on_save, opts)
     components.tag_input = input(i18n.t("add_tag"), "", function(value)
         tag_pending = value
     end)
-    components.description = popup(i18n.t("description"), { enter = true, wrap = true })
+    components.description = popup(i18n.t("description"), { enter = true, wrap = true, markdown = true })
     components.footer = popup("", { border = false, enter = true })
     owner.components = components
 

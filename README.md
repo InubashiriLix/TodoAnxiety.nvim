@@ -31,6 +31,20 @@ should I do next?”
   for the dedicated keymap icon column)
 - A system SQLite shared library (`libsqlite3.so`, `libsqlite3.dylib`, or
   `sqlite3.dll`)
+- Neovim's bundled `markdown`/`markdown_inline` treesitter parsers, for
+  markdown rendering in the detail pane and description editor (present in
+  stock Neovim; if missing, rendering silently falls back to plain text)
+
+> **Known incompatibility:** since the detail pane and description editor set
+> `filetype = markdown`, any installed markdown-rendering plugin that attaches
+> via `FileType markdown` will try to render them too. This is usually
+> harmless, but plugins that defer their setup with a timer and don't
+> re-check buffer validity when it fires can error if the popup is closed in
+> that window (e.g. `mdmath.nvim`, which defers ~100ms). todo.nvim reuses one
+> long-lived buffer for both detail surfaces to shrink that race, but cannot
+> eliminate it for every third-party plugin. If you hit an error like this,
+> it's worth reporting to that plugin, or setting `ui.markdown = false` to
+> opt the detail pane out of `filetype = markdown` entirely.
 
 Example with lazy.nvim:
 
@@ -112,6 +126,16 @@ The floating dashboard uses a task list and fixed detail pane when at least 100
 columns are available. Narrow floats and the sidebar use two-line task cards;
 press Enter to open the selected task in a detail popup.
 
+The detail pane and popup render the task as markdown: title, status,
+priority, deadline, urgency, and tags as a field list, followed by the
+description exactly as typed. `filetype` is set to `markdown`, so a rendering
+plugin such as `MeanderingProgrammer/render-markdown.nvim`, if installed,
+attaches automatically; without one, Neovim's built-in treesitter highlighting
+still applies. Set `ui.markdown = false` to disable this and see the raw
+markdown source instead. The description field in the add/edit form is the
+same filetype, so writing lists, checkboxes, or fenced code there highlights
+live and shows up rendered in the detail pane afterward.
+
 ### Views
 
 Seven tabs are available; `[` and `]` cycle them, `v` opens a picker, and the
@@ -188,6 +212,8 @@ require("todo").setup({
     -- "active", "emergency", "by_urgency", "by_time", "by_tag", "notices", or
     -- "archived"
     default_view = "active",
+    -- Render the detail pane and description editor as markdown.
+    markdown = true,
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
@@ -252,7 +278,7 @@ a time means 23:59:59 on that date.
 
 ## Data and lifecycle
 
-Tasks have a title, multi-line plain-text description, status, P0–P3 priority,
+Tasks have a title, multi-line markdown description, status, P0–P3 priority,
 optional deadline, and zero or more tags. Statuses are `todo`, `in_progress`,
 `done`, and `cancelled`. Tasks can be archived, restored, and—only after they
 have been archived—permanently deleted. Notices and task deadlines persist
