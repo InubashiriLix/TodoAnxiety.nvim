@@ -29,6 +29,17 @@
 - [`folke/which-key.nvim`](https://github.com/folke/which-key.nvim) v3（可选，
   用于独立的快捷键图标列）
 - 系统 SQLite 动态库：`libsqlite3.so`、`libsqlite3.dylib` 或 `sqlite3.dll`
+- Neovim 内置的 `markdown`/`markdown_inline` treesitter parser，用于详情面板
+  和描述编辑器的 markdown 渲染（官方 Neovim 自带；缺失时会静默退回纯文本）
+
+> **已知兼容性问题：** 详情面板和描述编辑器会把 `filetype` 设为 `markdown`，
+> 所以任何靠 `FileType markdown` 自动挂载的 markdown 渲染插件也会尝试接管它们。
+> 大多数情况没问题，但如果某个插件用定时器延迟初始化、且定时器触发时不重新
+> 校验 buffer 是否还有效，就可能在你很快关闭详情窗口时报错（例如
+> `mdmath.nvim`，它大约延迟 100ms 才启用）。todo.nvim 让详情面板和详情浮窗
+> 共用一个长期存在的 buffer 来缩小这个竞态窗口，但无法保证对所有第三方插件
+> 都彻底消除。如果遇到类似报错，建议向那个插件反馈，或者把
+> `ui.markdown` 设为 `false`，让详情面板不再使用 `filetype = markdown`。
 
 lazy.nvim 安装示例：
 
@@ -109,6 +120,14 @@ dashboard 底部会显示当前上下文的常用操作，按 `?` 可以查看�
 浮动 dashboard 在可用宽度达到 100 列时使用左侧任务列表、右侧固定详情的布局。
 窄浮窗和侧栏使用清晰的两行任务卡，按 Enter 为选中任务打开详情浮窗。
 
+详情面板和详情浮窗都按 markdown 渲染：标题、状态、优先级、截止时间、紧急度
+和标签组成字段列表，后面紧跟描述原文。窗口的 `filetype` 会设为 `markdown`，
+如果装了 `MeanderingProgrammer/render-markdown.nvim` 之类的渲染插件会自动接管；
+没装的话，Neovim 内置的 treesitter 高亮依然生效。将 `ui.markdown` 设为 `false`
+可以关闭渲染，直接看未加工的 markdown 源文本。新建/编辑表单里的描述输入框
+也是同一个 filetype，边写列表、复选框或代码块边高亮，保存后详情面板里会
+呈现同样的渲染效果。
+
 ### 视图
 
 共有七个标签页：`[` 和 `]` 循环切换，`v` 打开选择菜单，当前标签在标题栏高亮。
@@ -176,6 +195,8 @@ require("todo").setup({
     -- "active"、"emergency"、"by_urgency"、"by_time"、"by_tag"、"notices"
     -- 或 "archived"
     default_view = "active",
+    -- 详情面板和描述编辑器是否按 markdown 渲染
+    markdown = true,
     float = { width = 0.80, height = 0.75, border = "rounded" },
     sidebar = { width = 42, side = "right" },
   },
@@ -257,7 +278,7 @@ SQLite 提供的备份工具。
 
 ## 任务数据与生命周期
 
-每个任务包含标题、多行纯文本描述、状态、P0–P3 优先级、可选截止时间和任意
+每个任务包含标题、多行 markdown 描述、状态、P0–P3 优先级、可选截止时间和任意
 数量的标签。状态包括：
 
 - `todo`：待办

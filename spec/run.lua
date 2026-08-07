@@ -39,6 +39,9 @@ test("configuration defaults and validation", function()
     local ok = pcall(config.setup, { language = "fr" })
     eq(ok, false)
     eq(pcall(config.setup, { ui = { float = { width = 80 } } }), false)
+    eq(cfg.ui.markdown, true, "markdown rendering should default to on")
+    eq(config.setup({ ui = { markdown = false } }).ui.markdown, false)
+    eq(pcall(config.setup, { ui = { markdown = "yes" } }), false)
     config.setup({ keymaps = { toggle = false } })
 end)
 
@@ -387,6 +390,87 @@ test("time state supports arbitrary HHMM input and fine adjustment", function()
     rollover:move(-1)
     eq(rollover:value(), "23:10")
     eq(rollover.day_offset, -1)
+end)
+
+test("detail markdown keeps the description verbatim", function()
+    require("todo.config").setup({})
+    local markdown = require("todo.ui.markdown")
+    local now = os.time()
+    local task = {
+        id = 1,
+        kind = "task",
+        title = "Fix login timeout",
+        description = "Notes\n\n- [ ] reproduce\n- [x] grab logs\n\n```lua\nlocal t = 1\n```",
+        status = "in_progress",
+        priority = 1,
+        due_date = "2099-01-02",
+        due_time = "18:00",
+        tags = { "backend", "auth" },
+        created_at = now,
+        updated_at = now,
+    }
+    local lines = markdown.task_lines(task)
+    eq(lines[1], "# Fix login timeout")
+    local function has(needle)
+        return vim.iter(lines):any(function(line)
+            return line:find(needle, 1, true) ~= nil
+        end)
+    end
+    assert(has("**Status** In progress"), "expected a bold status field")
+    assert(has("**Priority** P1"), "expected a bold priority field")
+    assert(has("`#backend` `#auth`"), "expected tags as inline code")
+    assert(has("## Description"), "expected a description heading")
+    assert(vim.tbl_contains(lines, "---"), "expected a horizontal rule")
+    -- The markdown a user typed must survive untouched: no escaping, no indent.
+    assert(vim.tbl_contains(lines, "- [ ] reproduce"), "expected verbatim checkbox line")
+    assert(vim.tbl_contains(lines, "```lua"), "expected verbatim code fence")
+    assert(has("`e` Edit"), "expected a quoted action hint")
+    local without_actions = markdown.task_lines(task, { actions = false })
+    eq(without_actions[#without_actions]:sub(1, 1), "*", "actions = false should end on the timestamp line")
+
+    local empty = markdown.task_lines({
+        id = 2,
+        title = "Bare",
+        description = "",
+        status = "todo",
+        priority = 3,
+        tags = {},
+        created_at = now,
+        updated_at = now,
+    })
+    assert(vim.tbl_contains(empty, "*No description*"), "expected an italic placeholder")
+
+    eq(markdown.task_lines(nil), { "", "> " .. require("todo.i18n").t("no_tasks") })
+
+    local notice = markdown.task_lines({
+        id = 3,
+        kind = "notice",
+        title = "Shower",
+        description = "",
+        status = "todo",
+        priority = 2,
+        tags = {},
+        created_at = now,
+        updated_at = now,
+        reminder = {
+            scheduled_at = now,
+            next_reminder_at = now,
+            repeat_interval_seconds = 300,
+            recurrence = { kind = "daily" },
+        },
+    })
+    assert(
+        vim.iter(notice):any(function(line)
+            return line:find("**Trigger**", 1, true) ~= nil
+        end),
+        "expected the notice trigger field"
+    )
+    assert(
+        vim.iter(notice):any(function(line)
+            return line:find("5m", 1, true) ~= nil
+        end),
+        "expected the formatted repeat interval"
+    )
 end)
 
 test("dashboard viewmodel groups statuses and truncates Unicode", function()
