@@ -6,6 +6,7 @@ local defaults = {
     ui = {
         default_mode = "float",
         default_view = "active",
+        markdown = true,
         float = { width = 0.80, height = 0.75, border = "rounded" },
         sidebar = { width = 42, side = "right" },
     },
@@ -60,6 +61,7 @@ local function validate(opts)
             end,
             "'active', 'emergency', 'by_urgency', 'by_time', 'by_tag', 'notices', or 'archived'",
         },
+        ui_markdown = { opts.ui.markdown, "boolean" },
         keymaps = { opts.keymaps, "table" },
         icons = { opts.icons, "table" },
         reminders = { opts.reminders, "table" },

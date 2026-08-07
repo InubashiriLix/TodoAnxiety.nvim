@@ -3,6 +3,7 @@ local grouping = require("todo.ui.grouping")
 local highlights = require("todo.ui.highlights")
 local i18n = require("todo.i18n")
 local form = require("todo.ui.form")
+local markdown = require("todo.ui.markdown")
 local urgency = require("todo.urgency")
 local viewmodel = require("todo.ui.viewmodel")
 
@@ -14,6 +15,24 @@ local Split = require("nui.split")
 
 local M = {}
 local ns = vim.api.nvim_create_namespace("todo_dashboard")
+-- The fixed detail pane and the detail overlay are mutually exclusive (the
+-- overlay only opens when there is no fixed pane), so both can share one
+-- buffer kept alive across mount/unmount. Recreating it on every open/close
+-- gave third-party filetype=markdown watchers (e.g. mdmath.nvim, which
+-- enables itself 100ms after FileType via vim.defer_fn) a window to fire
+-- against a buffer nui had already deleted.
+local detail_bufnr = nil
+
+local function persistent_detail_bufnr()
+    if not detail_bufnr or not vim.api.nvim_buf_is_valid(detail_bufnr) then
+        detail_bufnr = vim.api.nvim_create_buf(false, true)
+        vim.bo[detail_bufnr].buftype = "nofile"
+        vim.bo[detail_bufnr].bufhidden = "hide"
+        vim.bo[detail_bufnr].swapfile = false
+        vim.bo[detail_bufnr].modifiable = false
+    end
+    return detail_bufnr
+end
 local state = {
     owner = nil,
     mode = nil,
@@ -195,13 +214,21 @@ local function header_content(compact, width)
     return result, spans, 1
 end
 
+local urgency_groups = {
+    overdue = "TodoUrgencyOverdue",
+    urgent = "TodoUrgencyUrgent",
+    high = "TodoUrgencyHigh",
+    attention = "TodoUrgencyAttention",
+    priority_only = "TodoUrgencyPriorityOnly",
+}
+
 local function urgency_label(task)
     if not urgency.is_candidate(task) then
         return nil
     end
     local info = task.urgency or urgency.calculate(task)
     task.urgency = info
-    return i18n.t(info.level)
+    return i18n.t(info.level), urgency_groups[info.level]
 end
 
 local function list_content(width)
@@ -212,9 +239,11 @@ local function list_content(width)
         if row.kind == "section" then
             local marker = row.collapsed and "▸" or "▾"
             local indent = string.rep("  ", row.depth)
-            lines[#lines + 1] = string.format("  %s%s %s  %d", indent, marker, row.label, row.count)
+            lines[#lines + 1] = string.format(" %s%s %s  %d", indent, marker, row.label, row.count)
+            decorations[#decorations + 1] =
+                { line = #lines - 1, from = 0, to = -1, group = "TodoSectionHeader", whole = true }
             local group = row.tag and highlights.tag(row.tag) or "TodoHeader"
-            decorations[#decorations + 1] = { line = #lines - 1, from = 2, to = #lines[#lines], group = group }
+            decorations[#decorations + 1] = { line = #lines - 1, from = 1, to = #lines[#lines], group = group }
             mappings[#lines] = row
             if index == state.cursor_row then
                 decorations[#decorations + 1] =
@@ -223,8 +252,9 @@ local function list_content(width)
         else
             local task = row.task
             local indent = string.rep("  ", row.depth)
+            local reason, reason_group = urgency_label(task)
             local line1, line2 =
-                viewmodel.card(task, math.max(10, width - 3 - #indent), urgency_label(task), { relative = relative })
+                viewmodel.card(task, math.max(10, width - 3 - #indent), reason, { relative = relative })
             local first = #lines + 1
             lines[#lines + 1] = " " .. indent .. line1
             lines[#lines + 1] = " " .. indent .. line2
@@ -232,14 +262,26 @@ local function list_content(width)
             mappings[first] = row
             mappings[first + 1] = row
             order[#order + 1] = task
-            local priority_start = lines[first]:find("P" .. task.priority, 1, true)
-            if priority_start then
+            local badge = string.format("[P%d]", task.priority)
+            local badge_start = lines[first]:find(badge, 1, true)
+            if badge_start then
                 decorations[#decorations + 1] = {
                     line = first - 1,
-                    from = priority_start - 1,
-                    to = priority_start + 1,
+                    from = badge_start - 1,
+                    to = badge_start - 1 + #badge,
                     group = "TodoPriority" .. task.priority,
                 }
+            end
+            if reason_group and reason then
+                local reason_start = lines[first + 1]:find(reason, 1, true)
+                if reason_start then
+                    decorations[#decorations + 1] = {
+                        line = first,
+                        from = reason_start - 1,
+                        to = reason_start - 1 + #reason,
+                        group = reason_group,
+                    }
+                end
             end
             for _, tag in ipairs(task.tags or {}) do
                 local marker = "#" .. tag
@@ -269,72 +311,10 @@ local function list_content(width)
     return lines, mappings, order, decorations
 end
 
+--- Detail panes render markdown, so treesitter owns the highlighting and we
+--- hand back an empty decoration list.
 local function detail_content(task)
-    if not task then
-        return { "", "  " .. i18n.t("no_tasks") }, {}
-    end
-    local info = urgency.is_candidate(task) and (task.urgency or urgency.calculate(task)) or nil
-    local lines = {
-        " " .. task.title,
-        "",
-    }
-    if task.kind == "notice" then
-        local reminder = task.reminder
-        lines[#lines + 1] = string.format(
-            " %s: %s",
-            i18n.t("trigger"),
-            reminder and os.date("%Y-%m-%d %H:%M:%S", reminder.scheduled_at) or "—"
-        )
-        lines[#lines + 1] = string.format(
-            " %s: %s",
-            i18n.t("reminder_interval"),
-            reminder and require("todo.duration").format(reminder.repeat_interval_seconds) or "—"
-        )
-        lines[#lines + 1] = string.format(
-            " %s: %s",
-            i18n.t("recurrence"),
-            reminder and require("todo.recurrence").label(reminder.recurrence) or "—"
-        )
-    else
-        lines[#lines + 1] = string.format(" %s: %s", i18n.t("status"), i18n.t(task.status))
-        lines[#lines + 1] = string.format(" %s: P%d", i18n.t("priority"), task.priority)
-        lines[#lines + 1] = string.format(
-            " %s: %s",
-            i18n.t("deadline"),
-            task.due_date and (task.due_date .. (task.due_time and (" " .. task.due_time) or "")) or "—"
-        )
-    end
-    if info then
-        lines[#lines + 1] = " " .. i18n.t(info.level)
-    end
-    lines[#lines + 1] = " " .. i18n.t("tags") .. ": " .. (#task.tags > 0 and table.concat(task.tags, "  ") or "—")
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = " " .. i18n.t("description")
-    lines[#lines + 1] = ""
-    for _, line in
-        ipairs(
-            vim.split(task.description ~= "" and task.description or i18n.t("no_description"), "\n", { plain = true })
-        )
-    do
-        lines[#lines + 1] = " " .. line
-    end
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = string.format(" %s: %s", i18n.t("created"), os.date("%Y-%m-%d %H:%M", task.created_at))
-    lines[#lines + 1] = string.format(" %s: %s", i18n.t("updated"), os.date("%Y-%m-%d %H:%M", task.updated_at))
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = " [ e "
-        .. i18n.t("action_edit")
-        .. " ]  [ s "
-        .. i18n.t("in_progress")
-        .. " ]  [ x "
-        .. i18n.t("done")
-        .. " ]"
-    local description_index = info and 9 or 8
-    return lines,
-        {
-            { line = 0, from = 1, to = #lines[1], group = "TodoHeader" },
-            { line = description_index - 1, from = 1, to = #lines[description_index], group = "TodoHeader" },
-        }
+    return markdown.task_lines(task), {}
 end
 
 local function apply_decorations(buf, decorations, offset)
@@ -987,6 +967,7 @@ local function open_details()
         end
     end
     local overlay = Popup({
+        bufnr = persistent_detail_bufnr(),
         relative = "editor",
         position = position,
         size = { width = width, height = height },
@@ -995,11 +976,15 @@ local function open_details()
             style = config.get().ui.float.border,
             text = { top = " " .. i18n.t("details") .. " ", top_align = "center" },
         },
-        win_options = { wrap = true, winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
+        win_options = vim.tbl_extend("force", {
+            wrap = true,
+            winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder",
+        }, markdown.win_options(false)),
         zindex = 70,
     })
     owner.detail_overlay = overlay
     overlay:mount()
+    markdown.attach(overlay.bufnr)
     render_overlay(overlay)
     local close = function()
         overlay:unmount()
@@ -1104,22 +1089,32 @@ end
 
 local function base_popup(label, opts)
     opts = opts or {}
-    return Popup({
+    local win_options = {
+        wrap = opts.wrap or false,
+        cursorline = false,
+        number = false,
+        relativenumber = false,
+        winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder",
+    }
+    if opts.markdown then
+        win_options = vim.tbl_extend("force", win_options, markdown.win_options(false))
+    end
+    local component = Popup({
+        bufnr = opts.bufnr,
         enter = opts.enter or false,
         focusable = opts.focusable ~= false,
         border = opts.border == false and "none" or {
             style = config.get().ui.float.border,
             text = { top = label and (" " .. label .. " ") or "", top_align = "left" },
         },
-        buf_options = { buftype = "nofile", bufhidden = "hide", swapfile = false, modifiable = false },
-        win_options = {
-            wrap = opts.wrap or false,
-            cursorline = false,
-            number = false,
-            relativenumber = false,
-            winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder",
-        },
+        buf_options = opts.bufnr and nil
+            or { buftype = "nofile", bufhidden = "hide", swapfile = false, modifiable = false },
+        win_options = win_options,
     })
+    if opts.markdown then
+        markdown.attach(component.bufnr)
+    end
+    return component
 end
 
 local function create_float(owner)
@@ -1134,7 +1129,10 @@ local function create_float(owner)
     owner.footer = base_popup(nil, { border = false })
     local body
     if owner.wide then
-        owner.detail = base_popup(i18n.t("details"), { enter = false, wrap = true })
+        owner.detail = base_popup(
+            i18n.t("details"),
+            { enter = false, wrap = true, markdown = true, bufnr = persistent_detail_bufnr() }
+        )
         body = Layout.Box({
             Layout.Box(owner.list, { size = "58%" }),
             Layout.Box(owner.detail, { size = "42%" }),
