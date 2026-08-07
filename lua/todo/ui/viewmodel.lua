@@ -29,6 +29,25 @@ function M.sections(tasks, view, now)
     return require("todo.ui.grouping").sections(tasks, view, now)
 end
 
+-- A half-filled circle rather than a triangle: folding uses ▾/▸, so a task
+-- status icon shaped like a triangle reads as another fold arrow.
+local status_icons = { todo = "○", in_progress = "◐", done = "✓", cancelled = "×" }
+
+-- Fixed widths so the urgency badge and due/relative column line up under
+-- each other across every card; scanning becomes a column comparison
+-- instead of parsing a new sentence per task.
+local URGENCY_COL = 13
+local DUE_COL = 18
+
+--- Right-pad (or truncate) to an exact display width so columns line up.
+local function pad(text, width)
+    text = tostring(text or "")
+    if vim.fn.strdisplaywidth(text) >= width then
+        return M.truncate(text, width)
+    end
+    return text .. string.rep(" ", width - vim.fn.strdisplaywidth(text))
+end
+
 function M.card(task, width, reason, opts)
     if task.kind == "notice" then
         local prefix = "󰀠  "
@@ -44,34 +63,40 @@ function M.card(task, width, reason, opts)
         end
         return prefix .. title, "    " .. M.truncate(table.concat(metadata, " · "), math.max(1, width - 4))
     end
-    local status_icons = { todo = "○", in_progress = "▶", done = "✓", cancelled = "×" }
-    local prefix = string.format("%s P%d  ", status_icons[task.status] or "?", task.priority)
-    local title = M.truncate(task.title, math.max(1, width - vim.fn.strdisplaywidth(prefix)))
-    local metadata = {}
-    if (opts or {}).relative then
-        local label =
-            require("todo.ui.grouping").relative((task.urgency or require("todo.urgency").calculate(task)).due_epoch)
-        if label then
-            metadata[#metadata + 1] = "⏳ " .. label
-        end
-    end
-    if task.due_date then
-        metadata[#metadata + 1] = "⏱ " .. task.due_date .. (task.due_time and (" " .. task.due_time) or "")
-    end
-    if reason and reason ~= "" then
-        metadata[#metadata + 1] = reason
-    end
-    for _, tag in ipairs(task.tags or {}) do
-        metadata[#metadata + 1] = "#" .. tag
+
+    opts = opts or {}
+    local icon = status_icons[task.status] or "?"
+    local badge = string.format("[P%d]", task.priority)
+    local prefix = icon .. " " .. badge .. " "
+    local prefix_width = vim.fn.strdisplaywidth(prefix)
+    local title = M.truncate(task.title, math.max(1, width - prefix_width))
+    local line1 = prefix .. title
+
+    local due_text
+    if opts.relative then
+        local label = require("todo.ui.grouping").relative(
+            (task.urgency or require("todo.urgency").calculate(task)).due_epoch
+        )
+        due_text = label or "—"
+    elseif task.due_date then
+        due_text = task.due_date .. (task.due_time and (" " .. task.due_time) or "")
+    else
+        due_text = "—"
     end
 
-    local indent = "     "
-    local available = math.max(1, width - vim.fn.strdisplaywidth(indent))
+    local tag_items = {}
+    for _, name in ipairs(task.tags or {}) do
+        tag_items[#tag_items + 1] = "#" .. name
+    end
+
+    local indent = string.rep(" ", prefix_width)
+    local columns_width = URGENCY_COL + 1 + DUE_COL + 1
+    local available = math.max(1, width - prefix_width - columns_width)
     local visible, hidden, used = {}, 0, 0
-    for index, item in ipairs(metadata) do
-        local separator = #visible > 0 and " · " or ""
+    for index, item in ipairs(tag_items) do
+        local separator = #visible > 0 and " " or ""
         local item_width = vim.fn.strdisplaywidth(separator .. item)
-        local reserve = index < #metadata and 4 or 0
+        local reserve = index < #tag_items and 4 or 0
         if used + item_width + reserve <= available then
             visible[#visible + 1] = item
             used = used + item_width
@@ -79,13 +104,20 @@ function M.card(task, width, reason, opts)
             hidden = hidden + 1
         end
     end
-    local line2 = table.concat(visible, " · ")
+    local tags_text = table.concat(visible, " ")
     if hidden > 0 then
         local suffix = "+" .. hidden
-        line2 = M.truncate(line2, math.max(0, available - vim.fn.strdisplaywidth(suffix) - 1))
-        line2 = (line2 ~= "" and (line2 .. " ") or "") .. suffix
+        tags_text = M.truncate(tags_text, math.max(0, available - vim.fn.strdisplaywidth(suffix) - 1))
+        tags_text = (tags_text ~= "" and (tags_text .. " ") or "") .. suffix
     end
-    return prefix .. title, indent .. line2
+
+    local urgency_cell = pad(reason and reason ~= "" and reason or "—", URGENCY_COL)
+    local due_cell = pad(due_text, DUE_COL)
+    local line2 = indent .. urgency_cell .. " " .. due_cell .. " " .. tags_text
+    -- Narrow windows (sidebar) can't fit both fixed columns; truncate rather
+    -- than overflow the window width.
+    line2 = M.truncate(line2, width)
+    return line1, line2
 end
 
 return M

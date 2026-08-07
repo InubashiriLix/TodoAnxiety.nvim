@@ -22,6 +22,7 @@ local links = {
     TodoUrgencyUrgent = "DiagnosticWarn",
     TodoUrgencyHigh = "DiagnosticInfo",
     TodoUrgencyAttention = "DiagnosticHint",
+    TodoUrgencyPriorityOnly = "Comment",
     TodoTag1 = "DiagnosticOk",
     TodoTag2 = "DiagnosticInfo",
     TodoTag3 = "DiagnosticHint",
@@ -30,6 +31,7 @@ local links = {
     TodoTag6 = "Identifier",
     TodoTag7 = "Type",
     TodoTag8 = "Special",
+    TodoSectionHeader = "Folded",
 }
 
 function M.setup()

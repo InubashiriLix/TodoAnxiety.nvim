@@ -52,9 +52,11 @@ assert(
     end),
     "expected selected task description in detail pane"
 )
+assert(detail_lines[1] == "# Wide dashboard task", "expected a markdown heading, got " .. tostring(detail_lines[1]))
+assert(vim.bo[state.owner.detail.bufnr].filetype == "markdown", "expected markdown filetype on the detail pane")
 assert(
     vim.iter(detail_lines):any(function(line)
-        return line:find("[ e Edit ]", 1, true) ~= nil
+        return line:find("`e` Edit", 1, true) ~= nil
     end),
     "expected readable detail actions"
 )

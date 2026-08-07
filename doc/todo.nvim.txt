@@ -31,6 +31,7 @@ Use |:checkhealth| todo to diagnose the installation.
       default_mode = "float",
       default_view = "active", -- or emergency, by_urgency, by_time,
                                -- by_tag, notices, archived
+      markdown = true, -- render the detail pane and description as markdown
       float = { width = 0.80, height = 0.75, border = "rounded" },
       sidebar = { width = 42, side = "right" },
     },
@@ -139,6 +140,24 @@ The dashboard shows two-line task cards. At 100 or more available columns, the
 floating view adds a fixed detail pane; narrow layouts open details with Enter.
 Use [ and ] to change views and h/l to move between the list and details in a
 wide dashboard.
+
+The detail pane and popup render the task as markdown: a field list (status,
+priority, deadline, urgency, tags) followed by the description exactly as
+typed. Its filetype is set to "markdown", so an installed rendering plugin
+attaches automatically; otherwise Neovim's built-in treesitter highlighting
+applies. Set ui.markdown = false to see the raw markdown source instead. The
+form's description field uses the same filetype, so markdown typed there
+highlights live and renders the same way once saved.
+
+Known incompatibility: filetype = "markdown" means any installed markdown
+rendering plugin that attaches via `FileType markdown` will also try to
+render these buffers. Plugins that defer their own setup with a timer and do
+not re-check buffer validity when it fires can error if the popup closes
+before the timer runs (mdmath.nvim, ~100ms delay, is one such plugin).
+todo.nvim shares one long-lived buffer between the fixed detail pane and the
+detail overlay to shrink this race, but cannot eliminate it for every
+third-party plugin. Report it upstream, or set ui.markdown = false to opt
+out of filetype = "markdown" entirely.
 
 Seven views are available: active (grouped by status), emergency (urgency-ranked
 candidates), by_urgency (all open tasks grouped by urgency band), by_time (all
