@@ -3,6 +3,7 @@ local M = {}
 local defaults = {
     db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
     language = "en",
+    sync = { enabled = false, remote = "", branch = "main" },
     ui = {
         default_mode = "float",
         default_view = "active",
@@ -37,6 +38,23 @@ local defaults = {
 local current = vim.deepcopy(defaults)
 
 local function validate(opts)
+    assert(type(opts.sync) == "table" and type(opts.sync.enabled) == "boolean", "sync.enabled must be a boolean")
+    local remote, branch = opts.sync.remote, opts.sync.branch
+    assert(
+        type(remote) == "string" and not remote:find("[%z\r\n]") and not remote:match("^%-"),
+        "sync.remote must be a Git URL or path"
+    )
+    assert(not opts.sync.enabled or remote ~= "", "sync.remote is required when sync is enabled")
+    assert(
+        type(branch) == "string"
+            and branch:match("^[%w][%w/_.%-]*$")
+            and not branch:find("..", 1, true)
+            and not branch:find("//", 1, true)
+            and not branch:find("/.", 1, true)
+            and not branch:match("[/.]$")
+            and not (branch .. "/"):find("%.lock/"),
+        "sync.branch must be a valid branch name"
+    )
     vim.validate({
         db_path = { opts.db_path, "string" },
         language = {

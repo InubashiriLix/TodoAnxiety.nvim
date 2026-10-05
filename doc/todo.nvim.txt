@@ -9,6 +9,7 @@ CONTENTS                                                        *todo-contents*
 4. Mappings .................................................. |todo-mappings|
 5. Emergency ranking ........................................ |todo-emergency|
 6. Data ........................................................ |todo-data|
+7. Multi-device sync ........................................... |todo-sync|
 
 ==============================================================================
 1. INTRODUCTION                                                   *todo-intro*
@@ -68,7 +69,9 @@ with which-key.add(), producing a separate icon column; icons are not prepended
 to mapping descriptions. Strings and { icon, color } tables are accepted.
 
 The public Lua API consists of setup(), open(opts), toggle(opts), add(opts),
-notice(opts), tags(), and close(). Database internals are not public API.
+notice(opts), tags(), close(), sync(), and sync_status(). Database internals
+are not public API. sync() runs asynchronously and reports its result through
+notifications; sync_status() returns local status and displays it.
 
 ==============================================================================
 3. COMMANDS                                                     *todo-commands*
@@ -92,6 +95,14 @@ notice(opts), tags(), and close(). Database internals are not public API.
 :Todo tags
         Open the tag manager. Create, rename, delete, filter, and inspect tag
         usage counts from one panel.
+
+:Todo sync
+        Download, merge, and upload changes using the configured private Git
+        repository. This is the only command that contacts the remote.
+
+:Todo sync status
+        Show local pending records, last success/error, and the sync directory.
+        Does not check the remote. See |todo-sync|.
 
 :Todo edit [id]
 :Todo start [id]
@@ -233,5 +244,65 @@ Tasks may be archived and restored. Archived tasks may also be permanently
 deleted with |:Todo| delete or D in the archived view. Schema v2 stores notices,
 recurrence rules, reminder state, and the last-used repeat interval. Existing
 tasks remain reminder-disabled until edited with a repeat interval.
+
+Schema v3 adds stable task UUIDs and a persistent sync journal, including when
+sync is disabled. Upgrading an existing database creates a consistent backup
+at <db_path>.pre-sync-<uuid>.db first. Keep this backup to use an older plugin
+version. Deletion removes current rows but leaves their content in sync history.
+
+==============================================================================
+7. MULTI-DEVICE SYNC                                               *todo-sync*
+
+Requires Git 2.28+ on macOS or Linux. Create a dedicated private EMPTY Git
+repository without a README, license, or .gitignore. Configure authentication
+on each device first: SSH host verification and an agent, or an HTTPS credential
+helper. Sync does not accept interactive password or host-key prompts.
+
+On the device containing your existing todos:
+>lua
+  require("todo").setup({
+    sync = {
+      enabled = true, -- default: false
+      remote = "git@github.com:YOUR_NAME/private-todos.git", -- default: ""
+      branch = "main",
+    },
+  })
+<
+Run :Todo sync to publish existing data. On each additional device, install the
+same plugin version, use this configuration with a fresh local database, and
+run :Todo sync to download. Do not copy the old database to bootstrap devices:
+independent upgrades of old database copies generate different UUIDs.
+
+Only :Todo sync contacts the remote. Nothing syncs on startup, focus, edits, or
+exit. Run it before leaving a device and after switching, or edit offline and
+sync later. :Todo sync status and :checkhealth todo perform local checks only.
+The managed Git directory is <db_path>.sync, separate from the plugin source.
+
+Tasks, notices, tags, archives, deletions, rules, completed occurrences and
+snoozes sync. Sound/UI settings, input preferences and bell delivery stay local.
+Both disconnected devices can ring. Deadline text remains local time; reminder
+instants are Unix timestamps. Calendar recurrence advances in the timezone of
+the device completing the occurrence.
+
+Concurrent changes select the newer WHOLE task, not individual fields. A
+millisecond/logical clock plus device identity breaks ties deterministically;
+incorrect device clocks can affect offline winners. UUIDs are shared, while
+numeric command IDs can differ between devices. Stale forms refuse to save:
+copy unsaved text and reopen the task. Recreating a deleted tag does not restore
+old associations. Task deletion keeps old content in the SQLite journal and
+Git history; pruning and additional application-level encryption are excluded.
+
+Each Git process times out after 30 seconds. Concurrent push rejections retry
+up to three attempts, without force pushing. Network/credential failures retain
+pending records. Correct the problem and run :Todo sync again. Edits during a
+sync may remain pending until the next invocation. Unknown formats, malformed
+records or conflicting record IDs roll back the entire import batch.
+
+Do not edit the managed Git directory or cloud-sync the live SQLite database.
+To rebuild a missing/damaged cache, close Neovim, move <db_path>.sync aside,
+then reopen and sync: the database journal rebuilds it. Preserve the database
+if remote data is invalid and inspect the reported error before attempting
+recovery. Keep one remote/branch per database; use a different db_path for a
+different repository. Disabling sync keeps all local features available.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

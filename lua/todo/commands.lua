@@ -56,6 +56,14 @@ function M.run(args)
             todo.notice({ title = rest })
         elseif command == "tags" then
             todo.tags()
+        elseif command == "sync" then
+            if rest == "status" then
+                todo.sync_status()
+            elseif rest == "" then
+                todo.sync()
+            else
+                error("usage: Todo sync [status]")
+            end
         elseif command == "edit" then
             todo.edit(resolve_id(rest))
         elseif actions[command] then
@@ -91,6 +99,7 @@ function M.complete(arglead, cmdline)
             "add",
             "notice",
             "tags",
+            "sync",
             "edit",
             "start",
             "done",
@@ -111,6 +120,10 @@ function M.complete(arglead, cmdline)
         return vim.tbl_filter(function(item)
             return vim.startswith(item, arglead)
         end, options)
+    elseif command == "sync" then
+        return vim.tbl_filter(function(item)
+            return vim.startswith(item, arglead)
+        end, { "status" })
     elseif command == "toggle" then
         return vim.tbl_filter(function(item)
             return vim.startswith(item, arglead)

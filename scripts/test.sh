@@ -20,6 +20,10 @@ fi
 
 nvim "${args[@]}" -l spec/run.lua
 
+if [[ -d "$sqlite_path" ]]; then
+  nvim "${args[@]}" -l spec/sync.lua
+fi
+
 if [[ -d "$nui_path" ]]; then
   nvim "${args[@]}" --cmd "set columns=140 lines=45" -l spec/wide.lua
 fi

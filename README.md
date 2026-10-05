@@ -18,6 +18,7 @@ should I do next?”
 - [Usage](#usage)
 - [Dashboard and form](#dashboard-and-form)
 - [Configuration](#configuration)
+- [Multi-device sync](#multi-device-sync)
 - [Emergency ranking](#emergency-ranking)
 - [Data and lifecycle](#data-and-lifecycle)
 - [Development](#development)
@@ -86,6 +87,7 @@ toggle [float|sidebar]
 add [title]
 notice [title]
 tags
+sync [status]
 edit [id]
 start|done|cancel|reopen [id]
 archive|restore|delete [id]
@@ -263,6 +265,82 @@ The plugin stores one global database rather than one database per project.
 Back up the configured `.db` file after closing Neovim, or use SQLite's backup
 tools while it is open.
 
+## Multi-device sync
+
+Optional Git sync works with a local SQLite database on each macOS or Linux
+device. Install Git 2.28+ and use the same updated plugin version everywhere.
+Only `:Todo sync` accesses the remote: there is no background, startup, focus,
+or shutdown sync. You can keep editing offline.
+
+1. Create a dedicated **private, empty Git repository**, without a README,
+   license, or `.gitignore`. Do not use the plugin source repository.
+2. Configure Git authentication on each device. For SSH, complete the initial
+   host-key verification in a terminal and load your key into an agent. For
+   HTTPS, use your Git credential helper. Sync cannot answer interactive prompts.
+3. On the device containing your existing todos, add this to your setup and run
+   `:Todo sync`:
+
+   ```lua
+   require("todo").setup({
+     sync = {
+       enabled = true, -- disabled by default
+       remote = "git@github.com:YOUR_NAME/private-todos.git",
+       branch = "main",
+     },
+   })
+   ```
+
+4. On your Mac or another device, install the plugin and dependencies, use the
+   same sync configuration with a fresh local database, then run `:Todo sync`.
+   No database copying or manual Git checkout is needed.
+5. Run `:Todo sync` on the device you are leaving, then on the device you are
+   switching to. Both devices may also edit offline and sync later.
+
+`:Todo sync status` reports the last success, pending local records, latest
+error, and cache path. It does **not** check the remote. `:checkhealth todo`
+checks Git and local paths without accessing the network. The equivalent Lua
+entry points are `require("todo").sync()` and `require("todo").sync_status()`.
+
+Tasks, notices, tags, archives, deletions, reminder rules, occurrence completion,
+and snoozes sync. Sound paths, UI preferences, last-used input values, and bell
+delivery progress stay local. Both devices can ring while disconnected. Due
+date text keeps its existing local-time meaning; scheduled reminder instants
+are shared as Unix timestamps. Daily/weekly recurrence is advanced using the
+timezone of the device completing the occurrence.
+
+Concurrent edits use the newer **whole task**, including its tags and reminder
+configuration. There is no field-by-field merge. Millisecond timestamps,
+logical sequence numbers, and device identities provide a deterministic order;
+incorrect device clocks can still affect concurrent offline edits. UUIDs
+identify tasks across devices; numeric IDs in `:Todo done 42` are local and
+may differ. An open form refuses to overwrite a task changed since it opened;
+copy unsaved text and reopen it before saving.
+
+The plugin stores immutable JSON transactions in Git and keeps the SQLite
+database local. Its managed Git directory is `<db_path>.sync`. Do not edit or
+commit files there manually, and do not place the live database in a synced
+folder. Tag deletion suppresses old associations; recreating that name does
+not restore them. Deleting tasks removes them from current lists but **retains
+their old content in SQLite sync history and Git history**. History pruning
+and encryption beyond your Git transport/provider are not included.
+
+Network/authentication failures retain pending records. Fix authentication or
+connectivity and run `:Todo sync` again. A sync process has a 30-second timeout
+per Git command, retries concurrent pushes up to three attempts, and never
+force-pushes. Changes made during a running sync can remain pending until the
+next invocation. Invalid or unsupported remote data leaves the database
+unchanged for that import batch; preserve the database and inspect the reported
+record/format error rather than overwriting either copy.
+
+Schema v3 adds UUIDs and a durable change journal even with sync disabled. An
+existing database gets a consistent `<db_path>.pre-sync-<uuid>.db` backup before
+migration; keep it if you need to roll back to an older plugin version. Disabling
+sync preserves local use. For cache recovery, close Neovim, move only
+`<db_path>.sync` aside, then reopen and sync; the database journal rebuilds it.
+Keep the same remote and branch for a database; use a separate `db_path` for a
+different sync repository. Initialize secondary devices from an empty database,
+since independently migrated copies of an old database get different UUIDs.
+
 ## Emergency ranking
 
 Only unarchived `todo` and `in_progress` tasks are candidates. Every task with a
@@ -282,7 +360,7 @@ Tasks have a title, multi-line markdown description, status, P0–P3 priority,
 optional deadline, and zero or more tags. Statuses are `todo`, `in_progress`,
 `done`, and `cancelled`. Tasks can be archived, restored, and—only after they
 have been archived—permanently deleted. Notices and task deadlines persist
-their reminder state. Existing databases migrate to schema v2 without enabling
+their reminder state. Existing databases migrate to schema v3 without enabling
 sound for old tasks until a reminder interval is saved.
 
 ## Development
@@ -297,3 +375,7 @@ SQLite integration tests run when `kkharji/sqlite.lua` is available on
 `runtimepath`; NUI integration tests similarly require `nui.nvim`. The test
 script automatically detects the usual lazy.nvim paths, or accepts
 `TODO_SQLITE_PATH` and `TODO_NUI_PATH`.
+
+With SQLite available, the suite also runs two-device sync tests against local
+bare Git repositories, without GitHub credentials or network access. CI runs
+on Linux and macOS with Neovim 0.10.4 and the current stable release.
