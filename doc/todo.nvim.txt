@@ -28,6 +28,12 @@ Use |:checkhealth| todo to diagnose the installation.
   require("todo").setup({
     db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
     language = "en", -- or "zh-CN"
+    -- Manual sync; see |todo-sync| for first-device and Mac setup.
+    sync = {
+      enabled = false, -- set true after configuring the private Git remote
+      remote = "", -- e.g. "git@github.com:YOUR_NAME/private-todos.git"
+      branch = "main", -- same remote and branch on every device
+    },
     ui = {
       default_mode = "float",
       default_view = "active", -- or emergency, by_urgency, by_time,

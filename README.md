@@ -209,6 +209,13 @@ overlap.
 require("todo").setup({
   db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
   language = "en", -- "en" or "zh-CN"
+  -- Optional manual sync. Use a dedicated private, empty Git repository.
+  -- Configure Git credentials on each device, then run :Todo sync.
+  sync = {
+    enabled = false, -- Change to true after setting your remote.
+    remote = "", -- e.g. "git@github.com:YOUR_NAME/private-todos.git"
+    branch = "main", -- Same remote and branch on every device.
+  },
   ui = {
     default_mode = "float", -- "float" or "sidebar"
     -- "active", "emergency", "by_urgency", "by_time", "by_tag", "notices", or

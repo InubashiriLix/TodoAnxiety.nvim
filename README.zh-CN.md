@@ -192,6 +192,13 @@ N 分钟、小时或天。重复提醒间隔会预填上一次使用的值；在
 require("todo").setup({
   db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
   language = "zh-CN", -- "en" 或 "zh-CN"
+  -- 可选的手动同步：先新建专用私有空 Git 仓库，并配置各设备的 Git 认证。
+  -- 填好配置后执行 :Todo sync；:Todo sync status 只查看本地状态。
+  sync = {
+    enabled = false, -- 填好 remote 后改为 true。
+    remote = "", -- 例如 "git@github.com:YOUR_NAME/private-todos.git"
+    branch = "main", -- 所有设备使用相同的远端和分支。
+  },
   ui = {
     default_mode = "float", -- "float" 或 "sidebar"
     -- "active"、"emergency"、"by_urgency"、"by_time"、"by_tag"、"notices"
