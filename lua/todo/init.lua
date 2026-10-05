@@ -14,6 +14,10 @@ local function close_store()
         sync_handle.cancel()
         sync_handle = nil
     end
+    local progress = package.loaded["todo.ui.sync_progress"]
+    if progress then
+        progress.close()
+    end
     if scheduler_instance then
         pcall(function()
             scheduler_instance:stop()
@@ -208,27 +212,32 @@ function M._reschedule_reminders()
 end
 
 function M.sync()
-    local store = M._service().store
-    local opts = vim.deepcopy(config.get().sync)
-    opts.on_import = function()
-        require("todo.ui.panel").refresh()
-        if scheduler_instance then
-            scheduler_instance:reconcile()
-        end
+    local progress = require("todo.ui.sync_progress")
+    if sync_handle and sync_handle.running then
+        progress.busy()
+        return
     end
-    sync_handle = require("todo.sync").run(store, opts, function(err, result)
-        sync_handle = nil
-        if err then
-            vim.notify(i18n.t("sync_failed", tostring(err)), vim.log.levels.ERROR, { title = "todo.nvim" })
-        else
-            vim.notify(
-                i18n.t("sync_success", result.records, result.pending),
-                vim.log.levels.INFO,
-                { title = "todo.nvim" }
-            )
+    local feedback = progress.start()
+    local ok, err = pcall(function()
+        local store = M._service().store
+        local opts = vim.deepcopy(config.get().sync)
+        opts.on_progress = function(event)
+            feedback:update(event)
         end
+        opts.on_import = function()
+            require("todo.ui.panel").refresh()
+            if scheduler_instance then
+                scheduler_instance:reconcile()
+            end
+        end
+        sync_handle = require("todo.sync").run(store, opts, function(failure, result)
+            sync_handle = nil
+            feedback:finish(failure, result)
+        end)
     end)
-    vim.notify(i18n.t("sync_started"), vim.log.levels.INFO, { title = "todo.nvim" })
+    if not ok then
+        feedback:finish(err)
+    end
 end
 
 function M.sync_status()

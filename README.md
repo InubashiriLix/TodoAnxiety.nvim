@@ -308,6 +308,14 @@ error, and cache path. It does **not** check the remote. `:checkhealth todo`
 checks Git and local paths without accessing the network. The equivalent Lua
 entry points are `require("todo").sync()` and `require("todo").sync_status()`.
 
+While syncing, a non-focusable card shows preparation, download, merge, local
+update, upload, elapsed time, and retries. It remains visible throughout network
+waits, independently of notification plugins. Completion stays visible for eight
+seconds and reports this run's uploaded/downloaded change records (not task
+counts); an unchanged sync explicitly says everything is up to date. Failures
+remain visible for fifteen seconds. Final results also appear in `:messages`.
+Edits still pending after completion are called out for the next manual sync.
+
 Tasks, notices, tags, archives, deletions, reminder rules, occurrence completion,
 and snoozes sync. Sound paths, UI preferences, last-used input values, and bell
 delivery progress stay local. Both devices can ring while disconnected. Due
