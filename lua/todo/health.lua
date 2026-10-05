@@ -87,6 +87,32 @@ function M.check()
         vim.health.info("Reminder scheduler is disabled")
     end
 
+    vim.health.start("todo.nvim sync (local checks only)")
+    if not cfg.sync.enabled then
+        vim.health.info("Git sync is disabled")
+    else
+        if vim.fn.executable("git") == 1 then
+            vim.health.ok("Git is available; authentication is checked only by :Todo sync")
+        else
+            vim.health.error("Git is required for sync")
+        end
+        if cfg.sync.remote ~= "" then
+            vim.health.ok("Sync remote configured, branch: " .. cfg.sync.branch)
+        else
+            vim.health.error("sync.remote is required")
+        end
+        local directory = require("todo.sync").directory({ path = cfg.db_path })
+        local ancestor = directory
+        while vim.fn.isdirectory(ancestor) == 0 and vim.fs.dirname(ancestor) ~= ancestor do
+            ancestor = vim.fs.dirname(ancestor)
+        end
+        if vim.fn.filewritable(ancestor) == 2 then
+            vim.health.ok("Sync directory is writable or can be created: " .. directory)
+        else
+            vim.health.error("Sync directory is not writable: " .. directory)
+        end
+    end
+
     for name, lhs in pairs(cfg.keymaps) do
         if lhs == false then
             goto continue

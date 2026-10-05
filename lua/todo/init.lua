@@ -5,10 +5,15 @@ local M = {}
 local store_instance
 local service_instance
 local scheduler_instance
+local sync_handle
 local registered_maps = {}
 local highlights_registered = false
 
 local function close_store()
+    if sync_handle then
+        sync_handle.cancel()
+        sync_handle = nil
+    end
     if scheduler_instance then
         pcall(function()
             scheduler_instance:stop()
@@ -154,7 +159,12 @@ end
 
 function M.setup(opts)
     local old_path = config.get().db_path
+    local old_sync = vim.deepcopy(config.get().sync)
     local result = config.setup(opts)
+    if sync_handle and not vim.deep_equal(old_sync, result.sync) then
+        sync_handle.cancel()
+        sync_handle = nil
+    end
     if old_path ~= result.db_path then
         close_store()
     end
@@ -172,6 +182,7 @@ function M._bootstrap()
     if not highlights_registered then
         highlights_registered = true
         local group = vim.api.nvim_create_augroup("TodoNvimHighlights", { clear = true })
+        vim.api.nvim_create_autocmd("VimLeavePre", { group = group, callback = close_store })
         vim.api.nvim_create_autocmd("ColorScheme", {
             group = group,
             callback = function()
@@ -194,6 +205,49 @@ end
 
 function M._reschedule_reminders()
     start_scheduler()
+end
+
+function M.sync()
+    local store = M._service().store
+    local opts = vim.deepcopy(config.get().sync)
+    opts.on_import = function()
+        require("todo.ui.panel").refresh()
+        if scheduler_instance then
+            scheduler_instance:reconcile()
+        end
+    end
+    sync_handle = require("todo.sync").run(store, opts, function(err, result)
+        sync_handle = nil
+        if err then
+            vim.notify(i18n.t("sync_failed", tostring(err)), vim.log.levels.ERROR, { title = "todo.nvim" })
+        else
+            vim.notify(
+                i18n.t("sync_success", result.records, result.pending),
+                vim.log.levels.INFO,
+                { title = "todo.nvim" }
+            )
+        end
+    end)
+    vim.notify(i18n.t("sync_started"), vim.log.levels.INFO, { title = "todo.nvim" })
+end
+
+function M.sync_status()
+    local store = M._service().store
+    local status = require("todo.sync.store").status(store)
+    local success = status.last_success and os.date("%Y-%m-%d %H:%M:%S", status.last_success) or "—"
+    vim.notify(
+        i18n.t(
+            "sync_status",
+            config.get().sync.enabled and "on" or "off",
+            success,
+            status.pending,
+            status.last_error or "",
+            require("todo.sync").directory(store)
+        ),
+        vim.log.levels.INFO,
+        { title = "todo.nvim" }
+    )
+    return status
 end
 
 function M.open(opts)
@@ -266,7 +320,7 @@ function M.edit(id)
     end
     local form_module = task.kind == "notice" and "todo.ui.notice_form" or "todo.ui.form"
     require(form_module).open(task, function(input)
-        local result, errors = M._service():update(id, input)
+        local result, errors = M._service():update(id, input, task.sync_revision)
         if result then
             require("todo.ui.panel").refresh()
             start_scheduler()

@@ -1288,7 +1288,7 @@ end
 
 local sqlite_ok = pcall(require, "sqlite.db")
 if sqlite_ok then
-    test("SQLite v1 databases migrate to reminder schema v2", function()
+    test("SQLite v1 databases migrate to sync schema v3", function()
         local path = vim.fn.tempname() .. ".db"
         local sqlite = require("sqlite.db")
         local db = sqlite:open(path)
@@ -1312,7 +1312,14 @@ if sqlite_ok then
         eq(legacy.kind, "task")
         eq(legacy.reminder, nil)
         local version = store.db:eval("SELECT MAX(version) AS version FROM schema_migrations")[1]
-        eq(tonumber(version.version), 2)
+        eq(tonumber(version.version), 3)
+        local backups = vim.fn.glob(path .. ".pre-sync-*.db", false, true)
+        eq(#backups, 1)
+        local backup = sqlite:open(backups[1])
+        eq(backup:eval("SELECT title FROM tasks")[1].title, "Legacy")
+        eq(tonumber(backup:eval("SELECT MAX(version) AS version FROM schema_migrations")[1].version), 1)
+        backup:close()
+        os.remove(backups[1])
         store:close()
         for _, suffix in ipairs({ "", "-wal", "-shm" }) do
             os.remove(path .. suffix)

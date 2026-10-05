@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        neovim: [v0.10.4, stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim }}
+      - name: Install plugin dependencies
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kkharji/sqlite.lua "$RUNNER_TEMP/sqlite.lua"
+          git clone --depth 1 https://github.com/MunifTanjim/nui.nvim "$RUNNER_TEMP/nui.nvim"
+      - name: Run unit, SQLite, Git sync, and UI tests
+        shell: bash
+        env:
+          TODO_SQLITE_PATH: ${{ runner.temp }}/sqlite.lua
+          TODO_NUI_PATH: ${{ runner.temp }}/nui.nvim
+        run: bash scripts/test.sh

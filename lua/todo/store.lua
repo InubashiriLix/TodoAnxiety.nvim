@@ -56,12 +56,21 @@ local migration_v2 = {
     "CREATE INDEX IF NOT EXISTS idx_tasks_kind_archived ON tasks(kind, archived_at)",
 }
 
+local transactions = setmetatable({}, { __mode = "k" })
 local function transaction(db, fn)
+    if transactions[db] then
+        return fn()
+    end
     db:execute("BEGIN IMMEDIATE")
+    transactions[db] = true
     local ok, result = xpcall(fn, debug.traceback)
+    transactions[db] = nil
     if ok then
-        db:execute("COMMIT")
-        return result
+        local committed, err = pcall(db.execute, db, "COMMIT")
+        if committed then
+            return result
+        end
+        result = err
     end
     pcall(function()
         db:execute("ROLLBACK")
@@ -69,15 +78,20 @@ local function transaction(db, fn)
     error(result)
 end
 
-local function migrate(db)
+local function migrate(db, path)
     db:execute([[CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at INTEGER NOT NULL
   )]])
     local rows = db:eval("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
     local version = rows[1] and tonumber(rows[1].version) or 0
-    if version > 2 then
+    if version > 3 then
         error("database schema version " .. version .. " is newer than this todo.nvim supports")
+    end
+    if version > 0 and version < 3 then
+        -- VACUUM INTO takes a consistent snapshot, including committed WAL data.
+        local backup = path .. ".pre-sync-" .. require("todo.sync.codec").uuid() .. ".db"
+        db:execute("VACUUM INTO '" .. backup:gsub("'", "''") .. "'")
     end
     if version < 1 then
         transaction(db, function()
@@ -102,6 +116,12 @@ local function migrate(db)
             })
         end)
     end
+    if version < 3 then
+        transaction(db, function()
+            require("todo.sync.store").migrate(db)
+            db:eval("INSERT INTO schema_migrations(version, applied_at) VALUES(3, :now)", { now = os.time() })
+        end)
+    end
 end
 
 local function query_one(db, sql, params)
@@ -119,8 +139,22 @@ function M.open(path)
     db:execute("PRAGMA foreign_keys = ON")
     db:execute("PRAGMA journal_mode = WAL")
     db:execute("PRAGMA busy_timeout = 3000")
-    migrate(db)
-    return setmetatable({ db = db, path = path }, M)
+    local opened, err = pcall(migrate, db, path)
+    if not opened then
+        db:close()
+        error(err)
+    end
+    local store = setmetatable({ db = db, path = path }, M)
+    local initialized, init_error = pcall(require("todo.sync.store").initialize, store)
+    if not initialized then
+        db:close()
+        error(init_error)
+    end
+    return store
+end
+
+function M:transaction(fn)
+    return transaction(self.db, fn)
 end
 
 function M:close()
@@ -472,8 +506,7 @@ function M:mark_reminded(id, now)
     self.db:eval(
         [[UPDATE reminders SET
       last_reminded_at = :now,
-      next_reminder_at = :now + repeat_interval_seconds,
-      snoozed_until = NULL
+      next_reminder_at = :now + repeat_interval_seconds
       WHERE task_id = :id AND enabled = 1]],
         { id = id, now = now }
     )
@@ -536,5 +569,7 @@ function M:delete_archived(id)
     self.db:eval("DELETE FROM tasks WHERE id = :id AND archived_at IS NOT NULL", { id = id })
     return self:get(id) == nil
 end
+
+require("todo.sync.store").wrap(M)
 
 return M

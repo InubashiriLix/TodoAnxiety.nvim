@@ -14,6 +14,9 @@ function M.new(service, opts)
         presenter = opts.presenter or function(task, callback)
             require("todo.ui.reminder_popup").show(task, callback)
         end,
+        dismiss = opts.dismiss or function()
+            require("todo.ui.reminder_popup").close()
+        end,
         play_sound = opts.play_sound or function()
             require("todo.sound").play(require("todo.config").get().reminders.sound)
         end,
@@ -30,8 +33,15 @@ function M:_drain()
     end
     local task = table.remove(self.queue, 1)
     self.presenting = true
+    self.active_task = task
     self.play_sound(task)
     self.presenter(task, function(action, value)
+        if self.service.store and self.service.store.get and task.sync_revision then
+            local current = self.service.store:get(task.id)
+            if not current or current.sync_revision ~= task.sync_revision then
+                action = "dismiss"
+            end
+        end
         if action == "complete" then
             self.service:complete_reminder(task.id, self.now())
         elseif action == "archive" then
@@ -44,9 +54,35 @@ function M:_drain()
         end)
         self.pending_ids[task.id] = nil
         self.presenting = false
+        self.active_task = nil
         self:reschedule()
         self:_drain()
     end)
+end
+
+function M:reconcile()
+    local function valid(task)
+        local current = self.service.store:get(task.id)
+        return current
+            and current.sync_revision == task.sync_revision
+            and not current.archived_at
+            and current.reminder
+            and current.reminder.enabled
+            and (current.status == "todo" or current.status == "in_progress")
+    end
+    self.queue = vim.tbl_filter(function(task)
+        if valid(task) then
+            return true
+        end
+        self.pending_ids[task.id] = nil
+        return false
+    end, self.queue)
+    if self.active_task and not valid(self.active_task) then
+        self.dismiss()
+    end
+    if self.running then
+        self:tick()
+    end
 end
 
 function M:tick()
@@ -99,6 +135,11 @@ end
 
 function M:stop()
     self.running = false
+    self.queue = {}
+    if self.active_task then
+        self.dismiss()
+    end
+    self.pending_ids = {}
     self.timer:stop()
     if not self.timer:is_closing() then
         self.timer:close()

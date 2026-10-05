@@ -120,6 +120,9 @@ local function reminder_input(input, kind, deadline, errors)
         repeat_interval_seconds = interval,
         scheduled_at = tonumber(raw.scheduled_at) or deadline.epoch,
         next_reminder_at = tonumber(raw.next_reminder_at) or deadline.epoch,
+        snoozed_until = tonumber(raw.snoozed_until),
+        last_reminded_at = tonumber(raw.last_reminded_at),
+        occurrence_started_at = tonumber(raw.occurrence_started_at) or tonumber(raw.scheduled_at) or deadline.epoch,
         recurrence = rule,
     }
 end

@@ -661,7 +661,7 @@ local function edit_task()
             { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
         M.close()
         require("todo.ui.notice_form").open(task, function(input)
-            local result, errors = service():update(task.id, input)
+            local result, errors = service():update(task.id, input, task.sync_revision)
             if result then
                 require("todo")._reschedule_reminders()
             end
@@ -675,7 +675,7 @@ local function edit_task()
         })
     else
         open_task_form(task, function(input)
-            local result, errors = service():update(task.id, input)
+            local result, errors = service():update(task.id, input, task.sync_revision)
             if result then
                 require("todo")._reschedule_reminders()
             end
@@ -1305,7 +1305,7 @@ function M.edit(id)
             { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
         M.close()
         require("todo.ui.notice_form").open(task, function(input)
-            local result, errors = service():update(task.id, input)
+            local result, errors = service():update(task.id, input, task.sync_revision)
             if result then
                 require("todo")._reschedule_reminders()
             end
@@ -1319,7 +1319,7 @@ function M.edit(id)
         })
     else
         open_task_form(task, function(input)
-            local result, errors = service():update(task.id, input)
+            local result, errors = service():update(task.id, input, task.sync_revision)
             if result then
                 require("todo")._reschedule_reminders()
             end

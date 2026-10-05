@@ -21,7 +21,7 @@ function M:create(input)
     return created
 end
 
-function M:update(id, input)
+function M:update(id, input, expected_revision)
     if not self.store:get(id) then
         return nil, { id = "not_found" }
     end
@@ -29,7 +29,7 @@ function M:update(id, input)
     if not task then
         return nil, errors
     end
-    local updated = self.store:update(id, task)
+    local updated = self.store:update(id, task, expected_revision)
     if updated and task.reminder and self.store.set_setting then
         self.store:set_setting("last_reminder_interval", task.reminder.repeat_interval_seconds)
     end
