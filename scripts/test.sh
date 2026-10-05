@@ -19,6 +19,7 @@ if [[ -d "$sqlite_path" ]]; then
 fi
 
 nvim "${args[@]}" -l spec/run.lua
+nvim "${args[@]}" -l spec/sync_progress.lua
 
 if [[ -d "$sqlite_path" ]]; then
   nvim "${args[@]}" -l spec/sync.lua

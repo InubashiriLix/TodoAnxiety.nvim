@@ -70,6 +70,7 @@ function M.run(store, opts, callback)
     assert(vim.fn.executable("git") == 1, "Git is not installed")
     local token = journal.lock(store)
     local handle = { running = true }
+    local downloaded, uploaded = 0, 0
     local repo = M.directory(store)
     local process, thread
     local function finish(err, result)
@@ -89,14 +90,21 @@ function M.run(store, opts, callback)
         if not handle.running then
             return
         end
+        handle.cancelling = true
         if process then
             process:kill(15)
             process:wait(1000)
         end
-        finish(require("todo.i18n").t("sync_cancelled"))
+        finish(require("todo.i18n").t("sync_cancelled"), { cancelled = true })
+    end
+    local function progress(phase, attempt)
+        if opts.on_progress then
+            -- Presentation failures must not interrupt database/Git work.
+            pcall(opts.on_progress, { phase = phase, attempt = attempt or 1 })
+        end
     end
     local function resume(result)
-        if not handle.running then
+        if not handle.running or handle.cancelling then
             return
         end
         local ok, err = coroutine.resume(thread, result)
@@ -166,6 +174,7 @@ function M.run(store, opts, callback)
         assert(git({ "show", ref .. ":format.json" }).stdout == manifest, "unsupported sync repository format")
     end
     thread = coroutine.create(function()
+        progress("prepare")
         local previous = store:get_setting("sync_remote")
         assert(
             not previous or previous == opts.remote .. "\n" .. opts.branch,
@@ -192,6 +201,9 @@ function M.run(store, opts, callback)
         -- Export all history so deleting the local Git cache is recoverable.
         for _, event in ipairs(journal.events(store)) do
             write(repo, repo .. "/events/" .. event.id .. ".json", event.payload .. "\n")
+            if tonumber(event.published) == 0 then
+                uploaded = uploaded + 1
+            end
         end
         local_payloads(repo)
         git({ "add", "--force", "--", "format.json", "events" })
@@ -202,6 +214,7 @@ function M.run(store, opts, callback)
         end
         validate_tree("HEAD")
         for attempt = 1, 3 do
+            progress("download", attempt)
             local remote_head = git({ "ls-remote", "--heads", "origin", "refs/heads/" .. opts.branch }).stdout
             if vim.trim(remote_head) ~= "" then
                 git({
@@ -212,21 +225,29 @@ function M.run(store, opts, callback)
                 })
                 local ref = "refs/remotes/origin/" .. opts.branch
                 validate_tree(ref)
+                progress("merge", attempt)
                 local merged = git({ "merge", "--no-edit", "--no-verify", "--allow-unrelated-histories", ref }, true)
                 if merged.code ~= 0 then
                     git({ "merge", "--abort" }, true)
                     error("could not merge immutable sync records: " .. merged.stderr .. merged.stdout)
                 end
             end
+            progress("apply", attempt)
             local payloads, ids = local_payloads(repo)
-            journal.import(store, payloads)
+            downloaded = downloaded + journal.import(store, payloads)
             if opts.on_import then
                 opts.on_import()
             end
+            progress("upload", attempt)
             local pushed = git({ "push", "--porcelain", "origin", "HEAD:refs/heads/" .. opts.branch }, true)
             if pushed.code == 0 then
                 journal.published(store, ids)
-                finish(nil, { records = #ids, pending = journal.status(store).pending })
+                finish(nil, {
+                    records = #ids,
+                    pending = journal.status(store).pending,
+                    uploaded = uploaded,
+                    downloaded = downloaded,
+                })
                 return
             end
             local output = pushed.stdout .. pushed.stderr

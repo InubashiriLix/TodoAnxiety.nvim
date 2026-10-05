@@ -284,6 +284,13 @@ exit. Run it before leaving a device and after switching, or edit offline and
 sync later. :Todo sync status and :checkhealth todo perform local checks only.
 The managed Git directory is <db_path>.sync, separate from the plugin source.
 
+A non-focusable progress card stays visible while syncing, showing the current
+stage, elapsed time and retries. It works independently of notification plugins.
+Completion remains visible for eight seconds and reports this run's uploaded
+and downloaded change records, or explicitly says there are no new changes.
+Pending edits made during sync are called out. Failures stay for fifteen seconds.
+Final results are also recorded in :messages for later review.
+
 Tasks, notices, tags, archives, deletions, rules, completed occurrences and
 snoozes sync. Sound/UI settings, input preferences and bell delivery stay local.
 Both disconnected devices can ring. Deadline text remains local time; reminder

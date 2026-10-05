@@ -78,6 +78,36 @@ test("configuration validation and completion", function()
     eq(require("todo.commands").complete("st", "Todo sync st"), { "status" })
 end)
 
+test("progress stages and per-run transfer counts include no-change sync", function()
+    local remote = root .. "/progress.git"
+    git({ "init", "--bare", remote })
+    local a, sa = open("progress-a")
+    local b = open("progress-b")
+    sa:create({ title = "Progress test" })
+    local first = sync(a, remote)
+    eq(first.uploaded, 1)
+    eq(first.downloaded, 0)
+    local stages = {}
+    local second = sync(b, remote, {
+        on_progress = function(event)
+            stages[#stages + 1] = event.phase
+        end,
+    })
+    eq(stages, { "prepare", "download", "merge", "apply", "upload" })
+    eq(second.uploaded, 0)
+    eq(second.downloaded, 1)
+    local unchanged = sync(b, remote)
+    eq(unchanged.uploaded, 0)
+    eq(unchanged.downloaded, 0)
+    eq(unchanged.pending, 0)
+    -- A broken notification provider must not abort the actual sync.
+    sync(a, remote, {
+        on_progress = function()
+            error("presentation failed")
+        end,
+    })
+end)
+
 test("independent IDs, idempotence and newer whole-record winner", function()
     local a, sa = open("independent-a")
     local b, sb = open("independent-b")
@@ -339,7 +369,13 @@ test("edits during sync remain queued and push races retry", function()
     sync(a, remote)
     sync(b, remote)
     local once = false
-    sync(a, remote, {
+    local attempts = {}
+    local result = sync(a, remote, {
+        on_progress = function(event)
+            if event.phase == "download" then
+                attempts[#attempts + 1] = event.attempt
+            end
+        end,
         on_import = function()
             if once then
                 return
@@ -350,6 +386,10 @@ test("edits during sync remain queued and push races retry", function()
             sync(b, remote)
         end,
     })
+    eq(attempts, { 1, 2 })
+    eq(result.uploaded, 0)
+    eq(result.downloaded, 1)
+    eq(result.pending, 1)
     eq(journal.status(a).pending, 1)
     eq(#a:list(), 3)
     sync(a, remote)
