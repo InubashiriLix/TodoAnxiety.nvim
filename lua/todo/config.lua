@@ -3,7 +3,14 @@ local M = {}
 local defaults = {
     db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
     language = "en",
-    sync = { enabled = false, remote = "", branch = "main" },
+    -- Configure in require("todo").setup({ sync = { ... } }) on each device.
+    -- Use a dedicated private, empty Git repository and existing Git credentials.
+    -- Run :Todo sync manually; :Todo sync status only checks local state.
+    sync = {
+        enabled = false, -- Set true after filling in remote on every device.
+        remote = "", -- e.g. "git@github.com:YOUR_NAME/private-todos.git"
+        branch = "main", -- Use the same remote and branch on all devices.
+    },
     ui = {
         default_mode = "float",
         default_view = "active",
