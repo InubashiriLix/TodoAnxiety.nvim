@@ -1,11 +1,16 @@
 local root = vim.fn.getcwd()
 package.path = root .. "/lua/?.lua;" .. root .. "/lua/?/init.lua;" .. package.path
 
+local description = { "The detail pane should remain visible." }
+for index = 1, 60 do
+    description[#description + 1] = "Detail line " .. index
+end
+
 local tasks = {
     {
         id = 1,
         title = "Wide dashboard task",
-        description = "The detail pane should remain visible.",
+        description = table.concat(description, "\n"),
         status = "in_progress",
         priority = 1,
         tags = { "ui", "wide" },
@@ -60,6 +65,19 @@ assert(
     end),
     "expected readable detail actions"
 )
+vim.api.nvim_set_current_win(state.owner.detail.winid)
+local press = function(keys)
+    vim.fn.feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt")
+end
+press("G")
+assert(vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1] == #detail_lines, "G should reach the detail end")
+press("gg")
+assert(vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1] == 1, "gg should reach the detail start")
+press("<C-d>")
+local down_line = vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1]
+assert(down_line > 1, "Ctrl-D should move down in details")
+press("<C-u>")
+assert(vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1] < down_line, "Ctrl-U should move up in details")
 panel.close()
 print("ok - wide NUI dashboard uses list/detail layout")
 vim.cmd("qa!")

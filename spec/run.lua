@@ -901,6 +901,123 @@ if nui_ok then
         package.loaded.todo = nil
     end)
 
+    test("dashboard jump keys follow displayed rows and detail text", function()
+        require("todo.config").setup({ keymaps = { toggle = false }, ui = { default_mode = "sidebar" } })
+        local description = {}
+        for index = 1, 60 do
+            description[index] = "Description line " .. index
+        end
+        local tasks = {}
+        for index = 1, 30 do
+            tasks[index] = {
+                id = index,
+                title = "Jump task " .. index,
+                description = table.concat(description, "\n"),
+                status = "todo",
+                priority = 2,
+                tags = {},
+                created_at = index,
+                updated_at = index,
+            }
+        end
+        local fake_service = require("todo.service").new(memory_store(tasks))
+        package.loaded.todo = {
+            _service = function()
+                return fake_service
+            end,
+        }
+        package.loaded["todo.ui.panel"] = nil
+        local panel = require("todo.ui.panel")
+        panel.open({ mode = "sidebar", view = "active" })
+        local state = panel.inspect_state()
+        local list = state.owner.split
+        local press = function(keys)
+            vim.fn.feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt")
+        end
+        local selected_line = function()
+            return vim.api.nvim_win_get_cursor(list.winid)[1]
+        end
+        local list_maps = {}
+        for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(list.bufnr, "n")) do
+            list_maps[mapping.lhs] = true
+        end
+        assert(list_maps.g and list_maps.gg, "tag management and gg mappings should coexist")
+
+        press("G")
+        eq(state.cursor_row, #state.rows)
+        eq(state.selected_id, state.rows[#state.rows].task.id)
+        press("gg")
+        eq(state.cursor_row, 1)
+        local start_line = selected_line()
+        local half = math.max(1, math.floor(vim.api.nvim_win_get_height(list.winid) / 2))
+        local target_line = math.min(vim.api.nvim_buf_line_count(list.bufnr), start_line + half)
+        local expected_row
+        for line = target_line, vim.api.nvim_buf_line_count(list.bufnr) do
+            if state.task_lines[line] and state.task_lines[line] ~= state.rows[1] then
+                expected_row = state.task_lines[line]
+                break
+            end
+        end
+        press("<C-d>")
+        eq(state.rows[state.cursor_row], expected_row)
+        eq(state.selected_id, expected_row.task.id)
+        local down_row = state.cursor_row
+        press("<C-u>")
+        assert(
+            state.cursor_row < down_row,
+            "half-page up should move toward the first row: " .. vim.inspect({
+                before = down_row,
+                after = state.cursor_row,
+                line = selected_line(),
+                half = half,
+            })
+        )
+        press("G")
+        press("<CR>")
+        local overlay = assert(state.owner.detail_overlay)
+        local last_detail_line = vim.api.nvim_buf_line_count(overlay.bufnr)
+        assert(last_detail_line > vim.api.nvim_win_get_height(overlay.winid))
+        press("gg")
+        eq(vim.api.nvim_win_get_cursor(overlay.winid)[1], 1)
+        press("G")
+        eq(vim.api.nvim_win_get_cursor(overlay.winid)[1], last_detail_line)
+        press("<C-u>")
+        assert(vim.api.nvim_win_get_cursor(overlay.winid)[1] < last_detail_line)
+        local up_line = vim.api.nvim_win_get_cursor(overlay.winid)[1]
+        press("<C-d>")
+        assert(vim.api.nvim_win_get_cursor(overlay.winid)[1] > up_line)
+        panel.close()
+
+        panel.open({ mode = "float", view = "active" })
+        state = panel.inspect_state()
+        assert(not state.owner.wide, "jump test expects a narrow floating list")
+        press("G")
+        eq(state.cursor_row, #state.rows)
+        press("gg")
+        eq(state.cursor_row, 1)
+        press("<C-d>")
+        assert(state.cursor_row > 1, "half-page down should work in the floating list")
+        press("zM")
+        press("G")
+        eq(state.cursor_row, #state.rows)
+        press("gg")
+        eq(state.cursor_row, 1)
+        panel.close()
+
+        panel.open({ mode = "float", view = "archived" })
+        state = panel.inspect_state()
+        eq(#state.tasks, 0)
+        eq(#state.rows, 1)
+        press("gg")
+        press("G")
+        press("<C-u>")
+        press("<C-d>")
+        eq(state.cursor_row, 1)
+        assert(panel.is_open(), "jump keys should be harmless in an empty view")
+        panel.close()
+        package.loaded.todo = nil
+    end)
+
     test("NUI dashboard folds tag sections and Esc unwinds search and filters", function()
         require("todo.config").setup({ keymaps = { toggle = false }, ui = { default_mode = "float" } })
         local fake_service = require("todo.service").new(memory_store({
