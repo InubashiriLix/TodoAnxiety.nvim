@@ -509,16 +509,46 @@ local function repaint()
     end
 end
 
-local function select_delta(delta)
+local function select_row(index)
     if #state.rows == 0 then
         return
     end
-    state.cursor_row = math.max(1, math.min(#state.rows, state.cursor_row + delta))
+    state.cursor_row = math.max(1, math.min(#state.rows, index))
     local row = current_row()
     if row and row.kind == "task" then
         state.selected_id = row.task.id
     end
     repaint()
+end
+
+local function select_delta(delta)
+    select_row(state.cursor_row + delta)
+end
+
+local function select_half_page(direction)
+    if #state.rows == 0 then
+        return
+    end
+    local owner = state.owner
+    local win = owner.split and owner.split.winid or owner.list.winid
+    local step = math.max(1, math.floor(vim.api.nvim_win_get_height(win) / 2))
+    local current_line = vim.api.nvim_win_get_cursor(win)[1]
+    local last_line = vim.api.nvim_buf_line_count(owner.split and owner.split.bufnr or owner.list.bufnr)
+    local target_line = math.max(1, math.min(last_line, current_line + direction * step))
+    local row_indices = {}
+    for index, row in ipairs(state.rows) do
+        row_indices[row] = index
+    end
+    -- Task cards span two mapped lines and a blank separator. Search in the
+    -- jump direction so a target inside a card still advances to another row.
+    for line = target_line, direction > 0 and last_line or 1, direction do
+        local index = row_indices[state.task_lines[line]]
+        if index and index ~= state.cursor_row then
+            select_row(index)
+            return
+        end
+    end
+    select_row(direction > 0 and #state.rows or 1)
 end
 
 local function change_view(view)
@@ -1002,6 +1032,7 @@ local function open_details()
         change_status("done")
         render_overlay(overlay)
     end, { buffer = overlay.bufnr })
+    vim.keymap.set("n", "gg", "gg", { buffer = overlay.bufnr, silent = true, desc = "Go to top of details" })
 end
 
 local function set_mappings(component, role)
@@ -1033,6 +1064,23 @@ local function set_mappings(component, role)
     vim.keymap.set("n", "k", function()
         select_delta(-1)
     end, opts("Previous task"))
+    if role == "list" or role == "sidebar" then
+        vim.keymap.set("n", "gg", function()
+            select_row(1)
+        end, opts("First task or section"))
+        vim.keymap.set("n", "G", function()
+            select_row(#state.rows)
+        end, opts("Last task or section"))
+        vim.keymap.set("n", "<C-u>", function()
+            select_half_page(-1)
+        end, opts("Move selection half a page up"))
+        vim.keymap.set("n", "<C-d>", function()
+            select_half_page(1)
+        end, opts("Move selection half a page down"))
+    elseif role == "detail" then
+        -- The panel's "g" action shadows native gg in this buffer.
+        vim.keymap.set("n", "gg", "gg", opts("Go to top of details"))
+    end
     vim.keymap.set("n", "a", add_task, opts("Add task"))
     vim.keymap.set("n", "n", add_notice, opts("Add notice"))
     vim.keymap.set("n", "e", edit_task, opts("Edit task"))
