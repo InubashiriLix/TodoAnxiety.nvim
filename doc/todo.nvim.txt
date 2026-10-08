@@ -139,7 +139,8 @@ Global defaults (all configurable or disableable):
 
 Existing mappings are not overwritten. Panel-local mappings:
 
-  j/k          move                    <CR>   show details
+  j/k          move                    gg/G   first/last row
+  <C-u>/<C-d>  move half a page        <CR>   show details
   <Tab>/za     fold section            zR/zM  expand/collapse all
   a/n/e        add task/notice/edit    s      start
   x/c/u        done/cancel/reopen      A/R    archive/restore
@@ -157,6 +158,9 @@ The dashboard shows two-line task cards. At 100 or more available columns, the
 floating view adds a fixed detail pane; narrow layouts open details with Enter.
 Use [ and ] to change views and h/l to move between the list and details in a
 wide dashboard.
+In the list, gg/G select the first/last row and Ctrl-U/Ctrl-D move by half the
+visible list height. These keys navigate text in the fixed detail pane and
+detail popup. The dashboard's g mapping still opens tag management.
 
 The detail pane and popup render the task as markdown: a field list (status,
 priority, deadline, urgency, tags) followed by the description exactly as
