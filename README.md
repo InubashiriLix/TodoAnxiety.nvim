@@ -162,9 +162,10 @@ priority, and tag filters apply on top of whichever view is active.
 
 In the task list, `gg` and `G` select the first and last row, while `Ctrl+U`
 and `Ctrl+D` move by half the visible list height. When a jump lands on a task,
-the selected task and details update. In the fixed detail pane and detail popup,
-these keys navigate the detail text. The existing `g` tag-management shortcut
-remains available in the dashboard.
+the selected task and details update. Pressed on the fixed detail pane, the same
+keys move the list selection and return focus to the list; inside the detail
+popup opened with Enter they navigate the detail text. The existing `g`
+tag-management shortcut remains available in the dashboard.
 
 Escape unwinds one layer at a time. In the search box it clears the query,
 closes the input, and returns the cursor to the list, from either Normal or
