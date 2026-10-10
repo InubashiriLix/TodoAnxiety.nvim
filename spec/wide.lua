@@ -6,18 +6,19 @@ for index = 1, 60 do
     description[#description + 1] = "Detail line " .. index
 end
 
-local tasks = {
-    {
-        id = 1,
-        title = "Wide dashboard task",
+local tasks = {}
+for index = 1, 8 do
+    tasks[index] = {
+        id = index,
+        title = index == 1 and "Wide dashboard task" or ("Wide dashboard task " .. index),
         description = table.concat(description, "\n"),
         status = "in_progress",
         priority = 1,
         tags = { "ui", "wide" },
-        created_at = os.time(),
-        updated_at = os.time(),
-    },
-}
+        created_at = index,
+        updated_at = index,
+    }
+end
 
 local store = {}
 function store:list(opts)
@@ -25,11 +26,11 @@ function store:list(opts)
 end
 
 function store:get(id)
-    return id == 1 and tasks[1] or nil
+    return tasks[id]
 end
 
 function store:stats()
-    return { active = 1, emergency = 1, archived = 0 }
+    return { active = #tasks, emergency = #tasks, archived = 0 }
 end
 
 function store:list_tags()
@@ -65,19 +66,41 @@ assert(
     end),
     "expected readable detail actions"
 )
-vim.api.nvim_set_current_win(state.owner.detail.winid)
+
+-- The detail pane stays focusable, but gg/G/Ctrl-U/Ctrl-D must still move the
+-- list selection and hand focus back to the list instead of scrolling the text.
 local press = function(keys)
     vim.fn.feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt")
 end
-press("G")
-assert(vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1] == #detail_lines, "G should reach the detail end")
+local focus_detail = function()
+    vim.api.nvim_set_current_win(state.owner.detail.winid)
+end
+
+focus_detail()
 press("gg")
-assert(vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1] == 1, "gg should reach the detail start")
+assert(state.cursor_row == 1, "gg from details should select the first row")
+assert(vim.api.nvim_get_current_win() == state.owner.list.winid, "gg from details should return focus to the list")
+
+focus_detail()
+press("G")
+assert(state.cursor_row == #state.rows, "G from details should select the last row")
+assert(state.rows[#state.rows].task.id == 8, "G should land on the last task")
+assert(vim.api.nvim_get_current_win() == state.owner.list.winid, "G from details should return focus to the list")
+
+focus_detail()
+press("gg")
+local top = state.cursor_row
+focus_detail()
 press("<C-d>")
-local down_line = vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1]
-assert(down_line > 1, "Ctrl-D should move down in details")
+assert(state.cursor_row > top, "Ctrl-D from details should advance the list selection")
+assert(vim.api.nvim_get_current_win() == state.owner.list.winid, "Ctrl-D from details should return focus to the list")
+
+local down = state.cursor_row
+focus_detail()
 press("<C-u>")
-assert(vim.api.nvim_win_get_cursor(state.owner.detail.winid)[1] < down_line, "Ctrl-U should move up in details")
+assert(state.cursor_row < down, "Ctrl-U from details should retreat the list selection")
+assert(vim.api.nvim_get_current_win() == state.owner.list.winid, "Ctrl-U from details should return focus to the list")
+
 panel.close()
 print("ok - wide NUI dashboard uses list/detail layout")
 vim.cmd("qa!")

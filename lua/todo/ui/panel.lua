@@ -1078,8 +1078,51 @@ local function set_mappings(component, role)
             select_half_page(1)
         end, opts("Move selection half a page down"))
     elseif role == "detail" then
-        -- The panel's "g" action shadows native gg in this buffer.
-        vim.keymap.set("n", "gg", "gg", opts("Go to top of details"))
+        -- The fixed detail pane stays focusable, but the list owns task
+        -- navigation. Jump keys pressed on the detail text must move the list
+        -- selection and hand focus back; otherwise they fall through to native
+        -- scrolling and the selection never moves. Long text is read in the
+        -- <CR> overlay, which keeps native gg/G/Ctrl-U/Ctrl-D scrolling.
+        local function jump(action)
+            return function()
+                action()
+                if state.owner then
+                    focus_list(state.owner)
+                end
+            end
+        end
+        vim.keymap.set(
+            "n",
+            "gg",
+            jump(function()
+                select_row(1)
+            end),
+            opts("Select first task or section")
+        )
+        vim.keymap.set(
+            "n",
+            "G",
+            jump(function()
+                select_row(#state.rows)
+            end),
+            opts("Select last task or section")
+        )
+        vim.keymap.set(
+            "n",
+            "<C-u>",
+            jump(function()
+                select_half_page(-1)
+            end),
+            opts("Move selection half a page up")
+        )
+        vim.keymap.set(
+            "n",
+            "<C-d>",
+            jump(function()
+                select_half_page(1)
+            end),
+            opts("Move selection half a page down")
+        )
     end
     vim.keymap.set("n", "a", add_task, opts("Add task"))
     vim.keymap.set("n", "n", add_notice, opts("Add notice"))
