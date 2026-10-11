@@ -971,6 +971,21 @@ local function render_overlay(overlay)
     apply_decorations(overlay.bufnr, decorations)
 end
 
+local function set_detail_navigation(buf)
+    -- Both detail surfaces reuse this buffer, so overwrite any stale task
+    -- navigation mappings whenever either surface is mounted.
+    for _, mapping in ipairs({
+        { "j", "Next detail line" },
+        { "k", "Previous detail line" },
+        { "gg", "Go to top of details" },
+        { "G", "Go to bottom of details" },
+        { "<C-u>", "Scroll details half a page up" },
+        { "<C-d>", "Scroll details half a page down" },
+    }) do
+        vim.keymap.set("n", mapping[1], mapping[1], { buffer = buf, silent = true, desc = mapping[2] })
+    end
+end
+
 local function open_details()
     local task = require_task()
     if not task then
@@ -1032,7 +1047,7 @@ local function open_details()
         change_status("done")
         render_overlay(overlay)
     end, { buffer = overlay.bufnr })
-    vim.keymap.set("n", "gg", "gg", { buffer = overlay.bufnr, silent = true, desc = "Go to top of details" })
+    set_detail_navigation(overlay.bufnr)
 end
 
 local function set_mappings(component, role)
@@ -1078,51 +1093,7 @@ local function set_mappings(component, role)
             select_half_page(1)
         end, opts("Move selection half a page down"))
     elseif role == "detail" then
-        -- The fixed detail pane stays focusable, but the list owns task
-        -- navigation. Jump keys pressed on the detail text must move the list
-        -- selection and hand focus back; otherwise they fall through to native
-        -- scrolling and the selection never moves. Long text is read in the
-        -- <CR> overlay, which keeps native gg/G/Ctrl-U/Ctrl-D scrolling.
-        local function jump(action)
-            return function()
-                action()
-                if state.owner then
-                    focus_list(state.owner)
-                end
-            end
-        end
-        vim.keymap.set(
-            "n",
-            "gg",
-            jump(function()
-                select_row(1)
-            end),
-            opts("Select first task or section")
-        )
-        vim.keymap.set(
-            "n",
-            "G",
-            jump(function()
-                select_row(#state.rows)
-            end),
-            opts("Select last task or section")
-        )
-        vim.keymap.set(
-            "n",
-            "<C-u>",
-            jump(function()
-                select_half_page(-1)
-            end),
-            opts("Move selection half a page up")
-        )
-        vim.keymap.set(
-            "n",
-            "<C-d>",
-            jump(function()
-                select_half_page(1)
-            end),
-            opts("Move selection half a page down")
-        )
+        set_detail_navigation(buf)
     end
     vim.keymap.set("n", "a", add_task, opts("Add task"))
     vim.keymap.set("n", "n", add_notice, opts("Add notice"))
