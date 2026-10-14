@@ -1,3 +1,4 @@
+local duration = require("todo.duration")
 local model = require("todo.model")
 local recurrence = require("todo.recurrence")
 local urgency = require("todo.urgency")
@@ -32,6 +33,92 @@ function M:update(id, input, expected_revision)
     local updated = self.store:update(id, task, expected_revision)
     if updated and task.reminder and self.store.set_setting then
         self.store:set_setting("last_reminder_interval", task.reminder.repeat_interval_seconds)
+    end
+    return updated
+end
+
+local DEFAULT_POSTPONE_SECONDS = 86400
+
+-- Overdue means a concrete deadline that already passed. Date-only deadlines
+-- are anchored at 23:59 by the model, so they count as overdue the next day.
+local function deadline_passed(task, now)
+    local parsed = model.parse_deadline(model.deadline_text(task))
+    return parsed ~= nil and parsed.epoch < now
+end
+
+local function is_finite(value)
+    return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
+end
+
+-- Rounds up to the next whole minute; returns nil when the result cannot be
+-- represented as a local calendar date/time.
+local function format_deadline(epoch)
+    if not is_finite(epoch) or epoch % 60 ~= 0 then
+        return nil
+    end
+    local ok, formatted = pcall(os.date, "%Y-%m-%d %H:%M", epoch)
+    if not ok or type(formatted) ~= "string" then
+        return nil
+    end
+    return formatted:match("^(%d%d%d%d%-%d%d%-%d%d) (%d%d:%d%d)$")
+end
+
+function M:postpone(id, seconds, now, expected_revision)
+    local task = self.store:get(id)
+    if not task then
+        return nil, { id = "not_found" }
+    end
+    if (task.kind or "task") ~= "task" or task.archived_at then
+        return nil, { eligible = "required" }
+    end
+    if task.status ~= "todo" and task.status ~= "in_progress" then
+        return nil, { eligible = "required" }
+    end
+    if seconds ~= nil and type(seconds) ~= "string" and type(seconds) ~= "number" then
+        return nil, { duration = "invalid" }
+    end
+    local wait = seconds == nil and DEFAULT_POSTPONE_SECONDS or duration.parse(seconds)
+    if not is_finite(wait) or wait <= 0 or wait % 1 ~= 0 then
+        return nil, { duration = "invalid" }
+    end
+    now = now or os.time()
+    if not is_finite(now) or not deadline_passed(task, now) then
+        return nil, { eligible = "required" }
+    end
+    if expected_revision ~= nil and task.sync_revision ~= expected_revision then
+        return nil, { revision = "conflict" }
+    end
+    local due_epoch = now + wait
+    if not is_finite(due_epoch) then
+        return nil, { duration = "invalid" }
+    end
+    due_epoch = math.ceil(due_epoch / 60) * 60
+    local due_date, due_time = format_deadline(due_epoch)
+    if not due_date then
+        return nil, { duration = "invalid" }
+    end
+    local reminder
+    if task.reminder then
+        reminder = vim.deepcopy(task.reminder)
+        reminder.scheduled_at = due_epoch
+        reminder.next_reminder_at = due_epoch
+        reminder.occurrence_started_at = due_epoch
+        reminder.snoozed_until = nil
+        reminder.last_reminded_at = nil
+    end
+    local updated = self.store:update(id, {
+        kind = task.kind or "task",
+        title = task.title,
+        description = task.description,
+        status = task.status,
+        priority = task.priority,
+        due_date = due_date,
+        due_time = due_time,
+        tags = vim.deepcopy(task.tags) or {},
+        reminder = reminder,
+    }, expected_revision)
+    if not updated then
+        return nil, { update = "failed" }
     end
     return updated
 end

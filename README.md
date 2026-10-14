@@ -168,6 +168,14 @@ selected task unchanged. In a wide dashboard, `l` enters details and `h` returns
 to the list. The existing `g` tag-management shortcut remains available in the
 dashboard.
 
+Press `p` on an overdue task to open a postponement input prefilled with `1d`.
+Press Enter to postpone it by 24 hours from submission, or enter a custom
+duration such as `2h`, `3d`, or `1d2h`. The new deadline is rounded up to the
+next whole minute; date-only deadlines gain an explicit time. Existing reminders
+move to the new deadline, keeping their interval and recurrence settings.
+Escape or Ctrl-Q cancels. This works in the task list, sidebar, and details;
+only unarchived overdue tasks in Todo or In progress status can be postponed.
+
 Escape unwinds one layer at a time. In the search box it clears the query,
 closes the input, and returns the cursor to the list, from either Normal or
 Insert mode. In a menu, help popup, or detail overlay it closes that window. On

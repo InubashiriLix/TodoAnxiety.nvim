@@ -19,6 +19,7 @@ if [[ -d "$sqlite_path" ]]; then
 fi
 
 nvim "${args[@]}" -l spec/run.lua
+nvim "${args[@]}" -l spec/postpone.lua
 nvim "${args[@]}" -l spec/sync_progress.lua
 
 if [[ -d "$sqlite_path" ]]; then
@@ -26,6 +27,7 @@ if [[ -d "$sqlite_path" ]]; then
 fi
 
 if [[ -d "$nui_path" ]]; then
+  nvim "${args[@]}" -l spec/postpone_ui.lua
   nvim "${args[@]}" --cmd "set columns=140 lines=45" -l spec/wide.lua
 fi
 

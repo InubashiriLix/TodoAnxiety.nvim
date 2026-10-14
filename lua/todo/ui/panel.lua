@@ -4,6 +4,7 @@ local highlights = require("todo.ui.highlights")
 local i18n = require("todo.i18n")
 local form = require("todo.ui.form")
 local markdown = require("todo.ui.markdown")
+local model = require("todo.model")
 local urgency = require("todo.urgency")
 local viewmodel = require("todo.ui.viewmodel")
 
@@ -340,6 +341,7 @@ local function footer_text(compact)
                 { key = "a", label = "+" },
                 { key = "n", label = "󰀠" },
                 { key = "e", label = "✎" },
+                { key = "p", label = "" },
                 { key = "x", label = "✓" },
                 { key = "/", label = "" },
                 { key = "f", label = "" },
@@ -349,6 +351,7 @@ local function footer_text(compact)
             { key = "a", label = i18n.t("action_add") },
             { key = "n", label = i18n.t("notice") },
             { key = "e", label = i18n.t("action_edit") },
+            { key = "p", label = i18n.t("action_postpone") },
             { key = "x", label = i18n.t("action_complete") },
             { key = "/", label = i18n.t("search") },
             { key = "f", label = i18n.t("filter") },
@@ -868,6 +871,252 @@ local function focus_list(owner)
     end
 end
 
+--- Return focus to the window that opened a transient when it is still part of
+--- the panel; otherwise fall back to the list/sidebar.
+local function focus_origin(owner, origin)
+    if origin and vim.api.nvim_win_is_valid(origin) and todo_has_window(owner, origin) then
+        pcall(vim.api.nvim_set_current_win, origin)
+        return
+    end
+    if owner_valid() then
+        focus_list(owner)
+    end
+end
+
+--- An ordinary, unarchived todo/in-progress task whose deadline already passed.
+local function postpone_eligible(task)
+    if not task then
+        return false
+    end
+    if (task.kind or "task") ~= "task" or task.archived_at then
+        return false
+    end
+    if task.status ~= "todo" and task.status ~= "in_progress" then
+        return false
+    end
+    return urgency.calculate(task).level == "overdue"
+end
+
+local function error_detail(errors)
+    if type(errors) == "table" then
+        local parts = {}
+        for key, value in pairs(errors) do
+            parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+        end
+        if #parts > 0 then
+            table.sort(parts)
+            return table.concat(parts, ", ")
+        end
+    end
+    return tostring(errors)
+end
+
+--- The sync Store wrapper raises the localized `sync_stale_form` text (it has no
+--- English "conflict" marker), so match the actual localized phrase first.
+local function is_conflict_error(err)
+    local text = type(err) == "string" and err or tostring(err)
+    local lowered = text:lower()
+    local localized = (i18n.t("sync_stale_form") or ""):lower()
+    if localized ~= "" and lowered:find(localized, 1, true) then
+        return true
+    end
+    return lowered:find("conflict", 1, true) ~= nil or lowered:find("revision", 1, true) ~= nil
+end
+
+--- Explicit revision precheck: compare the captured revision with the live row.
+local function revision_stale(id, revision)
+    if revision == nil then
+        return false
+    end
+    local ok, current = pcall(function()
+        local svc = service()
+        return svc.store and svc.store.get and svc.store:get(id)
+    end)
+    return ok and current ~= nil and current.sync_revision ~= revision
+end
+
+local function postpone_error_message(errors)
+    errors = errors or {}
+    if errors.duration then
+        return i18n.t("postpone_invalid")
+    elseif errors.eligible then
+        return i18n.t("postpone_ineligible")
+    elseif errors.id then
+        return i18n.t("postpone_not_found")
+    elseif errors.revision then
+        return i18n.t("postpone_conflict")
+    end
+    return i18n.t("postpone_failed") .. ": " .. i18n.t("db_error", error_detail(errors))
+end
+
+local function refresh_overlay(owner)
+    local overlay = owner and owner.detail_overlay
+    if not overlay or not overlay.bufnr or not vim.api.nvim_buf_is_valid(overlay.bufnr) then
+        return
+    end
+    local lines, decorations = detail_content(selected_task())
+    set_buffer(overlay.bufnr, lines)
+    apply_decorations(overlay.bufnr, decorations)
+end
+
+--- Open the postpone prompt for the current selection. `source` is "list" for
+--- the list/sidebar (must use the highlighted row, never a stale selection)
+--- and "detail" for the fixed pane or overlay (the displayed task).
+local function postpone(source)
+    local owner = state.owner
+    if not owner_valid() then
+        return
+    end
+    local task
+    if source == "list" then
+        local row = current_row()
+        if not row or row.kind ~= "task" then
+            vim.notify(i18n.t("missing_task"), vim.log.levels.WARN)
+            return
+        end
+        task = row.task
+    else
+        task = selected_task()
+    end
+    if not task then
+        vim.notify(i18n.t("missing_task"), vim.log.levels.WARN)
+        return
+    end
+    if not postpone_eligible(task) then
+        vim.notify(i18n.t("postpone_ineligible"), vim.log.levels.WARN)
+        return
+    end
+    local id, revision = task.id, task.sync_revision
+    local origin = vim.api.nvim_get_current_win()
+    local token = (owner.transient_token or 0) + 1
+    owner.transient_token = token
+
+    local function open_input(default_value)
+        if owner.closed or state.owner ~= owner or owner.transient_token ~= token then
+            return
+        end
+        close_transient(owner)
+        local input
+        input = Input({
+            relative = "editor",
+            position = { row = 2, col = "50%" },
+            size = { width = math.max(10, math.min(60, vim.o.columns - 8)) },
+            border = {
+                style = config.get().ui.float.border,
+                text = {
+                    top = " " .. i18n.t("postpone_title") .. " ",
+                    bottom = " " .. i18n.t("postpone_hint") .. " ",
+                    bottom_align = "center",
+                },
+            },
+            win_options = { winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
+            zindex = 80,
+        }, {
+            default_value = default_value,
+            on_submit = function(value)
+                if owner.closed or state.owner ~= owner or owner.transient ~= input then
+                    return
+                end
+                owner.transient = nil
+                if revision_stale(id, revision) then
+                    vim.notify(i18n.t("postpone_conflict"), vim.log.levels.ERROR)
+                    focus_origin(owner, origin)
+                    return
+                end
+                local ok, result, errors = pcall(function()
+                    return service():postpone(id, value, os.time(), revision)
+                end)
+                if not ok then
+                    local message
+                    if is_conflict_error(result) then
+                        message = i18n.t("postpone_conflict")
+                    else
+                        message = i18n.t("postpone_failed") .. ": " .. i18n.t("db_error", tostring(result))
+                    end
+                    vim.notify(message, vim.log.levels.ERROR)
+                    focus_origin(owner, origin)
+                    return
+                end
+                if not result then
+                    local message = postpone_error_message(errors)
+                    vim.notify(message, vim.log.levels.ERROR)
+                    if errors and errors.duration then
+                        -- NUI auto-unmounts on submit; reopen with the same text
+                        -- unless the panel, prompt, or token was replaced meanwhile.
+                        vim.schedule(function()
+                            if owner.closed or state.owner ~= owner then
+                                return
+                            end
+                            if owner.transient_token ~= token or owner.transient ~= nil then
+                                return
+                            end
+                            open_input(value)
+                        end)
+                    else
+                        focus_origin(owner, origin)
+                    end
+                    return
+                end
+                state.selected_id = id
+                require("todo")._reconcile_reminders()
+                vim.notify(i18n.t("postponed", model.deadline_text(result)), vim.log.levels.INFO)
+                render()
+                refresh_overlay(owner)
+                focus_origin(owner, origin)
+            end,
+            on_close = function()
+                if owner.transient == input then
+                    owner.transient = nil
+                end
+            end,
+        })
+        owner.transient = input
+        owner.transient_token = token
+        input:mount()
+        local cancel = function()
+            if owner.closed or state.owner ~= owner or owner.transient ~= input then
+                return
+            end
+            close_transient(owner)
+            focus_origin(owner, origin)
+        end
+        vim.keymap.set("n", "<Esc>", cancel, { buffer = input.bufnr, silent = true })
+        vim.keymap.set("i", "<Esc>", function()
+            vim.schedule(cancel)
+        end, { buffer = input.bufnr, silent = true })
+        vim.keymap.set("n", "q", cancel, { buffer = input.bufnr, silent = true })
+        vim.keymap.set({ "n", "i" }, "<C-q>", function()
+            vim.schedule(cancel)
+        end, { buffer = input.bufnr, silent = true })
+        vim.api.nvim_create_autocmd("WinLeave", {
+            buffer = input.bufnr,
+            once = true,
+            callback = function()
+                vim.schedule(function()
+                    if owner.closed or state.owner ~= owner or owner.transient ~= input then
+                        return
+                    end
+                    -- NUI unmounts before its scheduled submit callback runs.
+                    -- A destroyed input window is a submit/close, not a focus
+                    -- escape; leave the callback to finish the operation.
+                    if not input.winid or not vim.api.nvim_win_is_valid(input.winid) then
+                        return
+                    end
+                    local target_win = vim.api.nvim_get_current_win()
+                    close_transient(owner)
+                    if owner.mode == "float" and not owner_has_window(owner, target_win) then
+                        M.close()
+                    else
+                        focus_origin(owner, origin)
+                    end
+                end)
+            end,
+        })
+    end
+
+    open_input("1d")
+end
+
 local function open_search()
     local owner = state.owner
     close_transient(owner)
@@ -1047,6 +1296,9 @@ local function open_details()
         change_status("done")
         render_overlay(overlay)
     end, { buffer = overlay.bufnr })
+    vim.keymap.set("n", "p", function()
+        postpone("detail")
+    end, { buffer = overlay.bufnr })
     set_detail_navigation(overlay.bufnr)
 end
 
@@ -1094,6 +1346,15 @@ local function set_mappings(component, role)
         end, opts("Move selection half a page down"))
     elseif role == "detail" then
         set_detail_navigation(buf)
+    end
+    if role == "list" or role == "sidebar" then
+        vim.keymap.set("n", "p", function()
+            postpone("list")
+        end, opts("Postpone task"))
+    elseif role == "detail" then
+        vim.keymap.set("n", "p", function()
+            postpone("detail")
+        end, opts("Postpone task"))
     end
     vim.keymap.set("n", "a", add_task, opts("Add task"))
     vim.keymap.set("n", "n", add_notice, opts("Add notice"))

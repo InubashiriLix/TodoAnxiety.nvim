@@ -522,6 +522,31 @@ test("unknown remote format does not touch local data", function()
     eq(journal.status(b).pending, 1)
 end)
 
+test("postpone roundtrip syncs new deadline and reminder schedule", function()
+    local remote = root .. "/postpone.git"
+    git({ "init", "--bare", remote })
+    local a, sa = open("postpone-a")
+    local past = os.date("%Y-%m-%d %H:%M", os.time() - 2 * 86400)
+    local task = assert(sa:create({
+        title = "Postpone sync",
+        priority = 1,
+        deadline = past,
+        reminder_interval = "5m",
+    }))
+    local updated = assert(sa:postpone(task.id, "2h", os.time()))
+    assert(require("todo.model").deadline_text(updated) ~= past, "postpone should move the deadline")
+
+    sync(a, remote)
+    local b, _ = open("postpone-b")
+    sync(b, remote)
+    local mirrored = assert(by_uuid(b, task.sync_uuid), "postponed task did not sync")
+    eq(mirrored.due_date, updated.due_date)
+    eq(mirrored.due_time, updated.due_time)
+    assert(mirrored.reminder, "reminder missing after sync")
+    eq(mirrored.reminder.scheduled_at, updated.reminder.scheduled_at)
+    eq(mirrored.reminder.repeat_interval_seconds, updated.reminder.repeat_interval_seconds)
+end)
+
 for _, store in ipairs(stores) do
     store:close()
 end

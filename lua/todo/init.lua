@@ -211,6 +211,13 @@ function M._reschedule_reminders()
     start_scheduler()
 end
 
+function M._reconcile_reminders()
+    if scheduler_instance then
+        scheduler_instance:reconcile()
+    end
+    start_scheduler()
+end
+
 function M.sync()
     local progress = require("todo.ui.sync_progress")
     if sync_handle and sync_handle.running then
