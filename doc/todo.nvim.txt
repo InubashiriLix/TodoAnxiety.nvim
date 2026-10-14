@@ -145,6 +145,7 @@ Existing mappings are not overwritten. Panel-local mappings:
   a/n/e        add task/notice/edit    s      start
   x/c/u        done/cancel/reopen      A/R    archive/restore
   D            permanently delete the selected archived task (with confirm)
+  p            postpone the overdue task (input defaults to 1d)
   /            search                  f      filter
   g            manage tags
   v            choose view             r      refresh
@@ -153,6 +154,14 @@ Existing mappings are not overwritten. Panel-local mappings:
 
 The form uses CTRL-S to save, q or Escape in Normal mode to close, and CTRL-Q
 to close from either mode. In Insert mode Escape only exits Insert.
+
+Press p on an overdue task in the list, sidebar, or details to open an input
+prefilled with 1d. Enter sets the deadline to submission time plus 24 hours;
+custom positive durations such as 2h, 3d, or 1d2h are also accepted. Deadlines
+are rounded up to the next minute, including formerly date-only deadlines.
+Existing reminders move with the deadline, preserving interval and recurrence.
+Escape or CTRL-Q cancels without changes. Only unarchived ordinary tasks in
+todo or in_progress status with a past deadline qualify.
 
 The dashboard shows two-line task cards. At 100 or more available columns, the
 floating view adds a fixed detail pane; narrow layouts open details with Enter.
