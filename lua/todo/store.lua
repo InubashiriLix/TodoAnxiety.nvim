@@ -570,6 +570,43 @@ function M:delete_archived(id)
     return self:get(id) == nil
 end
 
+-- Captured before sync.wrap replaces M.update, so restoring a snapshot reuses
+-- the raw writer without emitting a nested sync event; the wrap around
+-- restore_snapshot logs the undo/redo as a single new revision.
+local raw_update = M.update
+
+-- Writes a full business snapshot back onto an existing task. Callers pass the
+-- revision they observed; a mismatch (external or synced change) returns nil
+-- without touching the row. archived_at/completed_at are restored explicitly
+-- because the shared UPDATE statement does not own archived_at.
+function M:restore_snapshot(id, snapshot, expected_revision)
+    return transaction(self.db, function()
+        local current = self:get(id)
+        if not current then
+            return nil
+        end
+        if expected_revision ~= nil and current.sync_revision ~= expected_revision then
+            return nil
+        end
+        raw_update(self, id, {
+            kind = snapshot.kind,
+            title = snapshot.title,
+            description = snapshot.description,
+            status = snapshot.status,
+            priority = snapshot.priority,
+            due_date = snapshot.due_date,
+            due_time = snapshot.due_time,
+            tags = vim.deepcopy(snapshot.tags),
+            reminder = vim.deepcopy(snapshot.reminder),
+        })
+        self.db:eval(
+            "UPDATE tasks SET archived_at = :archived_at, completed_at = :completed_at WHERE id = :id",
+            { id = id, archived_at = snapshot.archived_at, completed_at = snapshot.completed_at }
+        )
+        return self:get(id)
+    end)
+end
+
 require("todo.sync.store").wrap(M)
 
 return M

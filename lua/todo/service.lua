@@ -1,4 +1,5 @@
 local duration = require("todo.duration")
+local history = require("todo.history")
 local model = require("todo.model")
 local recurrence = require("todo.recurrence")
 local urgency = require("todo.urgency")
@@ -7,7 +8,9 @@ local M = {}
 M.__index = M
 
 function M.new(store)
-    return setmetatable({ store = store }, M)
+    local service = setmetatable({ store = store }, M)
+    history.attach(service)
+    return service
 end
 
 function M:create(input)
@@ -323,6 +326,53 @@ function M:set_reminder_enabled(id, enabled)
         return nil, { reminder = "not_found" }
     end
     return self.store:set_reminder_enabled(id, enabled)
+end
+
+function M:can_undo()
+    return self.history ~= nil and self.history:can_undo()
+end
+
+function M:can_redo()
+    return self.history ~= nil and self.history:can_redo()
+end
+
+-- Restores the previous business state of the most recently changed task.
+-- Refuses (without touching state or the stacks) when the task is gone, was
+-- changed externally or by sync, or the store rejects the revision.
+function M:undo()
+    local history = self.history
+    if not history or not history:can_undo() then
+        return nil, { history = "empty" }
+    end
+    local entry = history:peek_undo()
+    local current = self.store:get(entry.id)
+    if not history:revision_ok(current, entry.expected_revision) or not history:matches(current, entry.after) then
+        return nil, { history = "conflict" }
+    end
+    local ok, restored = pcall(self.store.restore_snapshot, self.store, entry.id, entry.before, entry.expected_revision)
+    if not ok or not restored then
+        return nil, { history = "conflict" }
+    end
+    history:pop_undo(restored)
+    return restored
+end
+
+function M:redo()
+    local history = self.history
+    if not history or not history:can_redo() then
+        return nil, { history = "empty" }
+    end
+    local entry = history:peek_redo()
+    local current = self.store:get(entry.id)
+    if not history:revision_ok(current, entry.expected_revision) or not history:matches(current, entry.before) then
+        return nil, { history = "conflict" }
+    end
+    local ok, restored = pcall(self.store.restore_snapshot, self.store, entry.id, entry.after, entry.expected_revision)
+    if not ok or not restored then
+        return nil, { history = "conflict" }
+    end
+    history:pop_redo(restored)
+    return restored
 end
 
 function M:last_reminder_interval()

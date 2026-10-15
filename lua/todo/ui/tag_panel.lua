@@ -2,6 +2,9 @@ local config = require("todo.config")
 local highlights = require("todo.ui.highlights")
 local i18n = require("todo.i18n")
 local viewmodel = require("todo.ui.viewmodel")
+local context = require("todo.ui.context_forms")
+
+local hints = context.hints()
 
 local Input = require("nui.input")
 local Menu = require("nui.menu")
@@ -128,6 +131,17 @@ local function input_dialog(owner, title, default_value, on_submit)
     })
     owner.transient = component
     component:mount()
+    hints.attach(component.bufnr, function(mode)
+        local entries = {
+            { key = "Enter", label = context.L("Apply", "应用") },
+            { key = "Esc / Ctrl-q", label = context.L("Cancel", "取消") },
+        }
+        if mode == "n" then
+            entries[#entries + 1] = { key = "q", label = context.L("Cancel", "取消") }
+            entries[#entries + 1] = { key = "i", label = context.L("Edit value", "输入内容") }
+        end
+        return { title = title, actions = entries }
+    end, { owner = owner })
     local close_input = function()
         component:unmount()
         owner.transient = nil
@@ -220,6 +234,13 @@ local function delete_tag(owner)
     })
     owner.transient = menu
     menu:mount()
+    hints.attach(menu.bufnr, function()
+        return { title = i18n.t("tag_delete_title"), actions = {
+            { key = "j/k / Up/Down / Tab/Shift-Tab", label = context.L("Choose", "选择") },
+            { key = "Enter", label = context.L("Confirm", "确认") },
+            { key = "q / Esc / Ctrl-q / Ctrl-c", label = context.L("Cancel", "取消") },
+        } }
+    end, { owner = owner })
     local close_menu = function()
         menu:unmount()
         owner.transient = nil
@@ -271,25 +292,15 @@ render = function(owner)
         lines[#lines + 1] = "  " .. i18n.t("no_tags")
     end
     lines[#lines + 1] = ""
-    for _, items in ipairs({
-        {
-            { key = "a", label = i18n.t("action_add") },
-            { key = "r", label = i18n.t("action_rename") },
-            { key = "d", label = i18n.t("action_delete") },
-        },
-        {
-            { key = "/", label = i18n.t("filter") },
-            { key = "q", label = i18n.t("action_complete") },
-        },
-    }) do
-        local footer = " "
-        for _, item in ipairs(items) do
-            local text = string.format("[%s %s] ", item.key, item.label)
-            footer = footer .. text
-        end
-        lines[#lines + 1] = viewmodel.truncate(footer, width)
-    end
+    local footer_actions = owner.hint_provider and owner.hint_provider().actions or {
+        { key = "a", label = i18n.t("action_add") },
+        { key = "/", label = i18n.t("filter") },
+        { key = "q", label = i18n.t("action_complete") },
+    }
+    local hint_start = #lines
+    vim.list_extend(lines, hints.lines(footer_actions, width, 3))
     set_lines(owner.popup, lines)
+    hints.highlight(owner.popup.bufnr, hint_start, #lines)
     for line, item in pairs(owner.line_tags) do
         local text = lines[line]
         vim.api.nvim_buf_set_extmark(owner.popup.bufnr, ns, line - 1, 0, {
@@ -348,6 +359,28 @@ function M.open(opts)
     current = owner
     owner.popup:mount()
     render(owner)
+    -- Report the panel's full action set to the shared contextual help.
+    local function provider()
+        local g = context.groups()
+        local actions = {
+            context.e("j/k / Up/Down", "move", "移动", g.nav, g.nav),
+        }
+        if owner.select_mode then
+            actions[#actions + 1] = context.e("<CR>/<Space>", "toggle tag", "切换标签", g.list, g.list)
+        end
+        actions[#actions + 1] = context.e("a", "add tag", "新增标签", g.manage, g.manage)
+        if owner.visible[owner.cursor] then
+            actions[#actions + 1] = context.e("r", "rename tag", "重命名标签", g.manage, g.manage)
+            actions[#actions + 1] = context.e("d", "delete tag", "删除标签", g.manage, g.manage)
+        end
+        actions[#actions + 1] = context.e("/", "filter tags", "筛选标签", g.manage, g.manage)
+        actions[#actions + 1] = context.e("q", "close", "关闭", g.close, g.close)
+        actions[#actions + 1] = context.e("<Esc>", "close", "关闭", g.close, g.close)
+        return { title = i18n.t(opts.title or "tag_manager"), actions = actions }
+    end
+    owner.hint_provider = provider
+    hints.attach(owner.popup.bufnr, provider, { owner = owner })
+    render(owner)
     owner.toggle_current = function()
         toggle_current(owner)
     end
@@ -399,6 +432,9 @@ function M.close()
     end
     owner.closed = true
     close_transient(owner)
+    pcall(function()
+        hints.close(owner)
+    end)
     if owner.popup then
         pcall(function()
             owner.popup:unmount()

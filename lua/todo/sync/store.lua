@@ -183,13 +183,14 @@ function M.wrap(Store)
         "snooze",
         "advance_occurrence",
         "set_reminder_enabled",
+        "restore_snapshot",
     }) do
         local original = Store[method]
         Store[method] = function(store, ...)
             local args = { ... }
             local argc = select("#", ...)
             return store:transaction(function()
-                if method == "update" and args[3] ~= nil then
+                if (method == "update" or method == "restore_snapshot") and args[3] ~= nil then
                     local current = store:get(args[1])
                     if not current or current.sync_revision ~= args[3] then
                         error(require("todo.i18n").t("sync_stale_form"))

@@ -1,6 +1,9 @@
 local config = require("todo.config")
 local i18n = require("todo.i18n")
 local DurationState = require("todo.ui.duration_state")
+local context = require("todo.ui.context_forms")
+
+local hints = context.hints()
 
 local Popup = require("nui.popup")
 
@@ -69,6 +72,9 @@ function M.open(value, opts)
             return
         end
         owner.closed = true
+        pcall(function()
+            hints.close(owner)
+        end)
         popup:unmount()
         if applied then
             opts.on_apply(state:value())
@@ -92,6 +98,23 @@ function M.open(value, opts)
 
     popup:mount()
     render()
+    -- Expose the picker's full keymap to the shared contextual help.
+    local function provider()
+        local g = context.groups()
+        return {
+            title = i18n.t("duration_picker"),
+            actions = {
+                context.e("h/l / Left/Right / Tab/Shift-Tab", "switch field", "切换字段", g.nav, g.nav),
+                context.e("j/k", "adjust ±1", "调整 ±1", g.picker, g.picker),
+                context.e("J/K", "adjust ±5", "调整 ±5", g.picker, g.picker),
+                context.e("0-9", "type value", "输入数值", g.picker, g.picker),
+                context.e("<CR>", "apply", "应用", g.submit, g.submit),
+                context.e("q / Ctrl-q", "cancel", "取消", g.close, g.close),
+                context.e("<Esc>", "cancel", "取消", g.close, g.close),
+            },
+        }
+    end
+    pcall(hints.attach, popup.bufnr, provider, { owner = owner })
     local map = function(key, callback)
         vim.keymap.set("n", key, callback, { buffer = popup.bufnr, silent = true })
     end

@@ -150,12 +150,27 @@ Existing mappings are not overwritten. Panel-local mappings:
   g            manage tags
   v            choose view             r      refresh
   [/]          previous/next view      <Esc>  clear filters, else close
-  ?            help                    q      close
+  ? / <F1>     contextual help         q      close
+  U / <C-r>    undo / redo saved task operations
+
+Hints follow the focused window, task state, field and editing mode. Press ?
+in Normal mode or F1 in Normal/Insert mode for complete grouped, scrollable
+help. Insert-mode ? remains text. Help restores focus and mode when closed.
+Completed/cancelled ordinary tasks offer s (resume in_progress) and u (todo).
+Archived tasks offer e/R/D; restore before changing status. Only available
+operations are offered, and unavailable task keys do not modify data.
+
+U undoes the last saved task operation; CTRL-R redoes it in the dashboard,
+details and reminder popup. Up to 50 steps are kept for this Neovim session:
+status changes, edits, postponement, archive/restore and reminder actions.
+New changes clear redo. Undo refuses to overwrite externally modified tasks.
+Creation, permanent deletion and bulk tag changes are excluded. Unsaved text
+retains native Neovim undo.
 
 The form uses CTRL-S to save, q or Escape in Normal mode to close, and CTRL-Q
 to close from either mode. In Insert mode Escape only exits Insert.
 
-Press p on an overdue task in the list, sidebar, or details to open an input
+Press p on an overdue task in the list, sidebar, details or reminder popup to open an input
 prefilled with 1d. Enter sets the deadline to submission time plus 24 hours;
 custom positive durations such as 2h, 3d, or 1d2h are also accepted. Deadlines
 are rounded up to the next minute, including formerly date-only deadlines.
@@ -212,7 +227,9 @@ todo windows. A sidebar stays open. User window-navigation mappings are not
 overridden.
 
 The task form has separate title, priority, status, deadline, tag, and
-description controls. Tab and Shift-Tab move focus. Deadline selection opens a
+description controls. Tab and Shift-Tab move focus, except in the description's
+Insert mode where editing/completion retains both keys. Press Escape, then
+Tab/Shift-Tab to switch fields from the description. Deadline selection opens a
 calendar with hjkl day movement, [/]/PageUp/PageDown month movement, Enter to
 choose, g for today, t for the unrestricted time editor, and x to clear. In the
 time editor, type HHMM directly; h/l changes fields, j/k adjusts by one, and J/K
@@ -236,7 +253,8 @@ Tab; in the multi-line description it inserts a newline. On the repeat-interval
 field, t opens a days/hours/minutes/seconds duration picker; compact input such
 as 5m remains available.
 When a reminder fires, the forced-focus popup uses d to complete the occurrence,
-s to snooze, a to archive, and q to close only the current popup. An unhandled
+s to snooze, p to postpone an overdue ordinary task (default 1d), a to archive,
+and q to close only the current popup. An unhandled
 item continues to remind at its configured interval. Focus, cursor, and Insert
 mode are restored after handling the popup.
 

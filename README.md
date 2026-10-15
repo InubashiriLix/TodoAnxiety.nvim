@@ -108,8 +108,26 @@ Default global mappings:
 | `<leader>Tg` | Manage tags              |
 | `<leader>Tn` | Add a notice             |
 
-The dashboard footer shows common context-sensitive actions. Press `?` to show
-the complete help. Existing global mappings are never overwritten.
+Operation hints follow the focused window, selected task, field, and editing
+mode throughout the plugin. Footers wrap to show available actions; `?` in
+Normal mode or `F1` in either mode opens the complete, grouped, scrollable help.
+Closing help restores focus and editing mode. `?` remains ordinary text in
+Insert mode. Existing global mappings are never overwritten.
+
+Task actions match the current state: Todo offers start/complete/cancel;
+In progress offers return to Todo/complete/cancel; completed or cancelled tasks
+offer `s` to resume In progress and `u` to reopen as Todo. Overdue open tasks
+also offer `p` to postpone. Archived tasks offer edit, `R` to restore, and `D`
+to delete with confirmation; restore them before changing their status.
+Unavailable task operations do not modify the task.
+
+In the dashboard, details, and reminder popup, `U` undoes the last saved task
+operation and `Ctrl+r` redoes it. History covers status changes, editing,
+postponement, archiving/restoring, and reminder actions within the current
+Neovim session (up to 50 steps). New changes clear redo history. Undo refuses
+to overwrite a task changed elsewhere, including by sync. New task creation,
+permanent deletion, and bulk tag changes are not undoable in this version.
+Unsaved text editing continues to use Neovim's native undo.
 
 The `/` search input closes as soon as focus moves away from it. A floating
 dashboard also closes whenever focus enters a regular editing window, while
@@ -173,7 +191,7 @@ Press Enter to postpone it by 24 hours from submission, or enter a custom
 duration such as `2h`, `3d`, or `1d2h`. The new deadline is rounded up to the
 next whole minute; date-only deadlines gain an explicit time. Existing reminders
 move to the new deadline, keeping their interval and recurrence settings.
-Escape or Ctrl-Q cancels. This works in the task list, sidebar, and details;
+Escape or Ctrl-Q cancels. This works in the task list, sidebar, details, and overdue task reminders;
 only unarchived overdue tasks in Todo or In progress status can be postponed.
 
 Escape unwinds one layer at a time. In the search box it clears the query,
@@ -190,7 +208,8 @@ N minutes, hours, or days. The repeat interval remembers its last value. Press
 typing compact values such as `5m` directly.
 
 When due, todo.nvim plays a sound and focuses a reminder popup: `d` completes
-the occurrence, `s` snoozes by a relative duration, `a` archives permanently,
+the occurrence, `s` snoozes by a relative duration, `p` postpones an overdue
+ordinary task with a `1d` default, `a` archives,
 and `q` closes only the current popup. Unhandled items continue at their own
 repeat interval. Missed reminders fire immediately when Neovim starts or the
 machine resumes; no sound can play while Neovim is completely stopped.
@@ -211,7 +230,9 @@ The add/edit form uses separate controls instead of parsing a text buffer:
   that tag from every associated task after confirmation; tasks are not deleted.
 - An independent multi-line description editor
 
-Use Tab and Shift-Tab to move between fields, `<C-s>` to save, and `q` or Escape
+Use Tab and Shift-Tab to move between fields. In the description editor's
+Insert mode, Tab and Shift-Tab are left to editing and completion plugins;
+press Escape first, then Tab or Shift-Tab to switch fields. Use `<C-s>` to save, and `q` or Escape
 in Normal mode, or `<C-q>` from either mode, to close. In Insert mode Escape
 still only leaves Insert, so it never closes a field you are typing in. Unsaved
 forms ask whether to save, discard, or continue editing. todo.nvim registers no mouse mappings; every plugin action
