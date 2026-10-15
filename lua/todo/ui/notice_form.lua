@@ -5,6 +5,9 @@ local i18n = require("todo.i18n")
 local model = require("todo.model")
 local CalendarState = require("todo.ui.calendar_state")
 local TimeState = require("todo.ui.time_state")
+local context = require("todo.ui.context_forms")
+
+local hints = context.hints()
 
 local Input = require("nui.input")
 local Layout = require("nui.layout")
@@ -124,6 +127,7 @@ function M.open(task, on_save, opts)
     local components = {}
     local focusables = {}
     local focus_index = 1
+    local render_footer
 
     components.header = popup(nil, false)
     components.title = input(i18n.t("title"), fields.title, function(value)
@@ -188,7 +192,161 @@ function M.open(task, on_save, opts)
         if target.insert then
             vim.cmd("startinsert")
         end
+        vim.schedule(render_footer)
     end
+
+    -- --- contextual hints -------------------------------------------------
+    local field_labels = {
+        i18n.t("title"),
+        i18n.t("trigger"),
+        i18n.t("reminder_interval"),
+        i18n.t("recurrence"),
+        i18n.t("recurrence"),
+        i18n.t("tags"),
+        i18n.t("description"),
+    }
+
+    local function field_title(index)
+        return field_labels[index] or context.L("Form actions", "表单操作")
+    end
+
+    local function field_actions(index, mode)
+        local g = context.groups()
+        local out = {}
+        local insert_mode = mode == "i"
+        if index == 1 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            end
+        elseif index == 2 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("c", "calendar", "月历", g.field, g.field)
+                out[#out + 1] = context.e("t", "today / time", "今天 / 时间", g.field, g.field)
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            end
+        elseif index == 3 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("t", "duration picker", "时长选择器", g.field, g.field)
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            end
+        elseif index == 4 then
+            out[#out + 1] = context.e("1-5", "choose recurrence", "选择重复规则", g.field, g.field)
+            out[#out + 1] = context.e("h/l", "cycle recurrence", "循环重复规则", g.field, g.field)
+            out[#out + 1] = context.e("<CR>", "edit value", "编辑取值", g.field, g.field)
+        elseif index == 5 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            end
+        elseif index == 6 then
+            out[#out + 1] = context.e("<CR>", "choose existing tags", "选择已有标签", g.field, g.field)
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            end
+        elseif index == 7 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Tab>/<S-Tab>", "native editing / completion", "原生编辑／补全", g.edit, g.edit)
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("<CR>", "go to footer", "前往底部", g.nav, g.nav)
+            end
+        elseif index == 8 then
+            out[#out + 1] = context.e("<CR>", "first field", "回到首个字段", g.nav, g.nav)
+        end
+
+        if insert_mode then
+            if index == 1 or index == 2 or index == 3 or index == 5 then
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            elseif index == 7 then
+                out[#out + 1] = context.e("<CR>", "new line", "换行", g.edit, g.edit)
+            end
+            local has_escape = false
+            for _, action in ipairs(out) do if action.key == "<Esc>" then has_escape = true end end
+            if not has_escape then
+                out[#out + 1] = context.e("<Esc>", "leave insert", "退出插入模式", g.edit, g.edit)
+            end
+        elseif index == 1 or index == 5 or index == 6 or index == 7 then
+            out[#out + 1] = context.e("i/a", "edit text", "编辑文本", g.edit, g.edit)
+            if index == 7 then
+                out[#out + 1] = context.e("j/k, gg/G", "read description", "浏览描述", g.nav, g.nav)
+            end
+        end
+
+        if insert_mode then
+            if index ~= 7 then
+                out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
+                out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
+            end
+            out[#out + 1] = context.e("<C-s>", "save", "保存", g.submit, g.submit)
+            out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
+        else
+            out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
+            out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
+            out[#out + 1] = context.e("<C-s>", "save", "保存", g.submit, g.submit)
+            out[#out + 1] = context.e("q", "close", "关闭", g.close, g.close)
+            out[#out + 1] = context.e("<Esc>", "close", "关闭", g.close, g.close)
+            out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
+        end
+        return out
+    end
+
+    local function make_provider(index)
+        return function(mode)
+            focus_index = index
+            return { title = field_title(index), actions = field_actions(index, mode) }
+        end
+    end
+
+    local function footer_provider(mode)
+        return {
+            title = context.L("Form help", "表单帮助"),
+            actions = field_actions(focus_index, mode),
+        }
+    end
+
+    render_footer = function(current_context)
+        if owner.closed or not vim.api.nvim_buf_is_valid(components.footer.bufnr) then
+            return
+        end
+        local mode = vim.api.nvim_get_mode().mode:sub(1, 1) == "i" and "i" or "n"
+        local ctx = current_context or footer_provider(mode)
+        local width = 80
+        if components.footer.winid and vim.api.nvim_win_is_valid(components.footer.winid) then
+            width = math.max(20, vim.api.nvim_win_get_width(components.footer.winid))
+        end
+        local lines = hints.lines(ctx.actions, width, 3)
+        if type(lines) ~= "table" or #lines == 0 then
+            lines = { " " .. context.L("Press F1 for contextual help", "按 F1 查看上下文帮助") }
+        end
+        vim.bo[components.footer.bufnr].modifiable = true
+        vim.api.nvim_buf_clear_namespace(components.footer.bufnr, components.footer.ns_id or -1, 0, -1)
+        vim.api.nvim_buf_set_lines(components.footer.bufnr, 0, -1, false, lines)
+        hints.highlight(components.footer.bufnr)
+    end
+
+    -- Attaches the shared contextual-hints provider to a buffer. The shared
+    -- module owns the ?/F1 popup (exposed to us as owner.help) so we never
+    -- collect handles here; owner.close() releases it via hints.close(owner).
+    local function attach_hints(bufnr, provider)
+        if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+            return
+        end
+        pcall(hints.attach, bufnr, provider, {
+            owner = owner,
+            on_update = function(ctx)
+                render_footer(ctx)
+            end,
+        })
+    end
+    owner.attach_hints = attach_hints
+    -- ----------------------------------------------------------------------
 
     local function set_input_value(component, value)
         vim.bo[component.bufnr].modifiable = true
@@ -286,6 +444,21 @@ function M.open(task, on_save, opts)
             end
             time_popup:mount()
             render_time()
+            attach_hints(time_popup.bufnr, function()
+                local g = context.groups()
+                return {
+                    title = i18n.t("choose_time"),
+                    actions = {
+                        context.e("h/l / Left/Right / Tab", "switch field", "切换字段", g.nav, g.nav),
+                        context.e("j/k", "adjust ±1", "调整 ±1", g.picker, g.picker),
+                        context.e("J/K", "adjust ±5", "调整 ±5", g.picker, g.picker),
+                        context.e("0-9", "type HHMM", "输入 HHMM", g.picker, g.picker),
+                        context.e("<CR>", "apply time", "应用时间", g.submit, g.submit),
+                        context.e("q / Ctrl-q", "cancel", "取消", g.close, g.close),
+                        context.e("<Esc>", "cancel", "取消", g.close, g.close),
+                    },
+                }
+            end)
             local map = function(key, callback)
                 vim.keymap.set("n", key, callback, { buffer = time_popup.bufnr, silent = true })
             end
@@ -393,6 +566,21 @@ function M.open(task, on_save, opts)
         end
         calendar_popup:mount()
         render_calendar()
+        attach_hints(calendar_popup.bufnr, function()
+            local g = context.groups()
+            return {
+                title = i18n.t("calendar"),
+                actions = {
+                    context.e("hjkl", "move by day or week", "按日或周移动", g.nav, g.nav),
+                    context.e("[]", "previous / next month", "上个 / 下个月", g.nav, g.nav),
+                    context.e("g", "jump to today", "跳到今天", g.picker, g.picker),
+                    context.e("t", "edit time", "编辑时间", g.picker, g.picker),
+                    context.e("<CR>", "apply date", "应用日期", g.submit, g.submit),
+                    context.e("q / Ctrl-q", "cancel", "取消", g.close, g.close),
+                    context.e("<Esc>", "cancel", "取消", g.close, g.close),
+                },
+            }
+        end)
         local map = function(key, callback)
             vim.keymap.set("n", key, callback, { buffer = calendar_popup.bufnr, silent = true })
         end
@@ -449,6 +637,9 @@ function M.open(task, on_save, opts)
             end)
             owner.tag_panel_open = false
         end
+        pcall(function()
+            hints.close(owner)
+        end)
         pcall(function()
             owner.layout:unmount()
         end)
@@ -528,20 +719,38 @@ function M.open(task, on_save, opts)
         })
         owner.transient = menu
         menu:mount()
+        vim.keymap.set("n", "q", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
+        vim.keymap.set("n", "<C-q>", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
+        attach_hints(menu.bufnr, function()
+            local g = context.groups()
+            return {
+                title = i18n.t("unsaved_title"),
+                actions = {
+                    context.e("<CR>", "select", "选择", g.list, g.list),
+                    context.e("j/k / Up/Down / Tab/Shift-Tab", "move", "移动", g.nav, g.nav),
+                    context.e("q / Ctrl-q", "cancel", "取消", g.close, g.close),
+                    context.e("<Esc>", "cancel", "取消", g.close, g.close),
+                },
+            }
+        end)
     end
 
     for index, target in ipairs(focusables) do
         for _, mode in ipairs({ "n", "i" }) do
-            vim.keymap.set(mode, "<Tab>", function()
-                vim.schedule(function()
-                    focus(index + 1)
-                end)
-            end, { buffer = target.component.bufnr, silent = true })
-            vim.keymap.set(mode, "<S-Tab>", function()
-                vim.schedule(function()
-                    focus(index - 1)
-                end)
-            end, { buffer = target.component.bufnr, silent = true })
+            -- The description is a free-form text buffer: keep the native <Tab>
+            -- (indent / completion) while inserting instead of switching fields.
+            if not (mode == "i" and target.component == components.description) then
+                vim.keymap.set(mode, "<Tab>", function()
+                    vim.schedule(function()
+                        focus(index + 1)
+                    end)
+                end, { buffer = target.component.bufnr, silent = true })
+                vim.keymap.set(mode, "<S-Tab>", function()
+                    vim.schedule(function()
+                        focus(index - 1)
+                    end)
+                end, { buffer = target.component.bufnr, silent = true })
+            end
             vim.keymap.set(mode, "<C-s>", function()
                 vim.schedule(save)
             end, { buffer = target.component.bufnr, silent = true })
@@ -552,6 +761,13 @@ function M.open(task, on_save, opts)
         vim.keymap.set("n", "q", request_close, { buffer = target.component.bufnr, silent = true })
         -- Normal-mode Esc only; insert-mode Esc must still leave insert.
         vim.keymap.set("n", "<Esc>", request_close, { buffer = target.component.bufnr, silent = true })
+    end
+
+    -- Every focusable reports its own contextual actions to the shared hints
+    -- module; the footer slot reuses the aggregated footer provider.
+    for index, target in ipairs(focusables) do
+        local provider = index == 8 and footer_provider or make_provider(index)
+        attach_hints(target.component.bufnr, provider)
     end
 
     local function choose_recurrence(index)
@@ -626,6 +842,8 @@ function M.open(task, on_save, opts)
 
     local size =
         { width = math.max(48, math.min(92, vim.o.columns - 4)), height = math.max(24, math.min(31, vim.o.lines - 4)) }
+    -- Reserve up to three rows so the dynamic footer can show wrapped hints.
+    local footer_size = math.max(1, math.min(3, size.height - 18))
     owner.layout = Layout(
         { relative = "editor", position = "50%", size = size },
         Layout.Box({
@@ -639,13 +857,13 @@ function M.open(task, on_save, opts)
             Layout.Box(components.recurrence_spec, { size = 3 }),
             Layout.Box(components.tags, { size = 3 }),
             Layout.Box(components.description, { grow = 1 }),
-            Layout.Box(components.footer, { size = 1 }),
+            Layout.Box(components.footer, { size = footer_size }),
         }, { dir = "col" })
     )
     owner.layout:mount()
     set_lines(components.header, { "  " .. i18n.t(task.id and "notice" or "notice_new") })
     set_lines(components.description, vim.split(fields.description, "\n", { plain = true }), true)
-    set_lines(components.footer, { " " .. i18n.t("notice_form_footer") })
+    render_footer()
     render_recurrence()
     vim.schedule(function()
         focus(1)
