@@ -36,25 +36,48 @@ function M:_drain()
     self.active_task = task
     self.play_sound(task)
     self.presenter(task, function(action, value)
-        if self.service.store and self.service.store.get and task.sync_revision then
-            local current = self.service.store:get(task.id)
-            if not current or current.sync_revision ~= task.sync_revision then
-                action = "dismiss"
+        local ok, result, errors = pcall(function()
+            if self.service.store and self.service.store.get and task.sync_revision then
+                local current = self.service.store:get(task.id)
+                if not current or current.sync_revision ~= task.sync_revision then
+                    if action == "postpone" then
+                        return nil, { revision = "conflict" }
+                    end
+                    return true
+                end
             end
+            if action == "complete" then
+                return self.service:complete_reminder(task.id, self.now())
+            elseif action == "archive" then
+                return self.service:archive(task.id)
+            elseif action == "snooze" then
+                return self.service:snooze(task.id, value, self.now())
+            elseif action == "postpone" then
+                return self.service:postpone(task.id, value, self.now(), task.sync_revision)
+            end
+            return true
+        end)
+        if not ok or not result then
+            local i18n = require("todo.i18n")
+            local key = errors and errors.revision and "postpone_conflict"
+                or errors and errors.eligible and "postpone_ineligible"
+                or errors and errors.duration and "postpone_invalid"
+                or errors and errors.id and "postpone_not_found"
+            vim.notify(key and i18n.t(key) or i18n.t("db_error", tostring(ok and vim.inspect(errors) or result)),
+                vim.log.levels.ERROR)
+        elseif action == "postpone" and type(result) == "table" then
+            vim.notify(require("todo.i18n").t("postponed", require("todo.model").deadline_text(result)), vim.log.levels.INFO)
         end
-        if action == "complete" then
-            self.service:complete_reminder(task.id, self.now())
-        elseif action == "archive" then
-            self.service:archive(task.id)
-        elseif action == "snooze" then
-            self.service:snooze(task.id, value, self.now())
-        end
+
         pcall(function()
             require("todo.ui.panel").refresh()
         end)
         self.pending_ids[task.id] = nil
         self.presenting = false
         self.active_task = nil
+        if action == "postpone" and ok and result then
+            self:reconcile()
+        end
         self:reschedule()
         self:_drain()
     end)

@@ -862,7 +862,7 @@ if nui_ok then
         for _, line in ipairs(sidebar_lines) do
             assert(vim.fn.strdisplaywidth(line) <= sidebar_width, "sidebar line exceeds window width: " .. line)
         end
-        assert(sidebar_lines[#sidebar_lines]:find("[a +]", 1, true))
+        assert(sidebar_lines[#sidebar_lines]:find("F1", 1, true), "narrow sidebar should offer full contextual help")
         vim.fn.feedkeys("/", "xt")
         assert(
             vim.wait(100, function()

@@ -207,6 +207,11 @@ function M._service()
     return service_instance
 end
 
+-- Rendering contextual hints must not open a database as a side effect.
+function M._existing_service()
+    return service_instance
+end
+
 function M._reschedule_reminders()
     start_scheduler()
 end
