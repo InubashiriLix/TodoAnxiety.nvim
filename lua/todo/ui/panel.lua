@@ -7,6 +7,8 @@ local markdown = require("todo.ui.markdown")
 local model = require("todo.model")
 local urgency = require("todo.urgency")
 local viewmodel = require("todo.ui.viewmodel")
+local actions = require("todo.ui.actions")
+local hints = require("todo.ui.hints")
 
 local Input = require("nui.input")
 local Layout = require("nui.layout")
@@ -79,7 +81,7 @@ local function owner_has_window(owner, winid)
     if not owner or not winid or not vim.api.nvim_win_is_valid(winid) then
         return false
     end
-    for _, name in ipairs({ "split", "header", "list", "footer", "detail", "detail_overlay", "transient" }) do
+    for _, name in ipairs({ "split", "header", "list", "footer", "detail", "detail_overlay", "transient", "help" }) do
         local component = owner[name]
         if component and component.winid == winid then
             return true
@@ -97,7 +99,7 @@ local function tag_panel_has_window(winid)
     if not tag_owner or tag_owner.closed then
         return false
     end
-    for _, name in ipairs({ "popup", "transient" }) do
+    for _, name in ipairs({ "popup", "transient", "help" }) do
         local component = tag_owner[name]
         if component and component.winid == winid then
             return true
@@ -115,7 +117,7 @@ local function reminder_popup_has_window(winid)
     return reminder_owner
         and not reminder_owner.closed
         and reminder_owner.component
-        and reminder_owner.component.winid == winid
+        and (reminder_owner.component.winid == winid or (reminder_owner.help and reminder_owner.help.winid == winid))
 end
 
 local function todo_has_window(owner, winid)
@@ -334,38 +336,60 @@ local function apply_decorations(buf, decorations, offset)
     end
 end
 
-local function footer_text(compact)
-    local line = " "
-    local items = compact
-            and {
-                { key = "a", label = "+" },
-                { key = "n", label = "󰀠" },
-                { key = "e", label = "✎" },
-                { key = "p", label = "" },
-                { key = "x", label = "✓" },
-                { key = "/", label = "" },
-                { key = "f", label = "" },
-                { key = "?", label = "" },
-            }
-        or {
-            { key = "a", label = i18n.t("action_add") },
-            { key = "n", label = i18n.t("notice") },
-            { key = "e", label = i18n.t("action_edit") },
-            { key = "p", label = i18n.t("action_postpone") },
-            { key = "x", label = i18n.t("action_complete") },
-            { key = "/", label = i18n.t("search") },
-            { key = "f", label = i18n.t("filter") },
-            { key = "?", label = i18n.t("help") },
-        }
-    if state.view == "archived" then
-        table.insert(items, 4, { key = "D", label = compact and "" or i18n.t("action_delete") })
+local function L(en, zh)
+    return config.get().language == "zh-CN" and zh or en
+end
+
+local function context_task(role)
+    if role == "detail" or role == "overlay" then return selected_task() end
+    if role == "list" or role == "sidebar" then
+        local row = current_row()
+        return row and row.kind == "task" and row.task or nil
     end
-    for _, item in ipairs(items) do
-        local text = item.label == "" and string.format("[%s] ", item.key)
-            or string.format("[%s %s] ", item.key, item.label)
-        line = line .. text
+end
+
+local function panel_context(role)
+    local entries = actions.task_actions(context_task(role))
+    vim.list_extend(entries, require("todo.ui.history").actions())
+    local function add(key, en, zh, group)
+        entries[#entries + 1] = { key = key, label = L(en, zh), group = group, modes = { "n" } }
     end
-    return line
+    local nav, page = L("Navigation", "导航"), L("Page", "页面")
+    if role == "detail" or role == "overlay" then
+        add("j/k", "Read lines", "逐行阅读", nav)
+        add("gg/G", "Top / bottom", "首行／末行", nav)
+        add("Ctrl-u/d", "Half page", "半页滚动", nav)
+        if role == "detail" then add("h", "Return to list", "返回列表", nav) end
+    else
+        add("j/k", "Select row", "选择条目", nav)
+        add("gg/G", "First / last row", "首项／末项", nav)
+        add("Ctrl-u/d", "Half page", "半页跳转", nav)
+        if context_task(role) then add("Enter", "Details", "详情", nav) end
+        if state.owner and state.owner.detail and role == "list" then add("l", "Focus details", "进入详情", nav) end
+        add("Tab / za", "Fold section", "折叠当前分组", nav)
+        add("zR / zM", "Expand / collapse all", "全部展开／折叠", nav)
+    end
+    if role ~= "overlay" then
+        add("a / n", "New task / notice", "新建任务／提醒", page)
+        add("/", "Search", "搜索", page)
+        add("f", "Filter", "筛选", page)
+        add("[ / ]", "Previous / next view", "上一／下一视图", page)
+        add("v", "Choose view", "选择视图", page)
+        add("g", "Manage tags", "管理标签", page)
+        add("r", "Refresh", "刷新", page)
+        add("Esc", "Clear filters, else close", "清除筛选，否则关闭", page)
+    end
+    add("q", role == "overlay" and "Close details" or "Close dashboard", role == "overlay" and "关闭详情" or "关闭面板", page)
+    if role == "overlay" then add("Esc", "Close details", "关闭详情", page) end
+    add("? / F1", "Complete help", "完整帮助", page)
+    local title = (role == "detail" or role == "overlay") and i18n.t("details") or i18n.t(state.view)
+    local task = context_task(role)
+    if task then title = title .. " · " .. i18n.t(task.status) end
+    return { title = title, actions = entries }
+end
+
+local function footer_lines(width, role)
+    return hints.lines(panel_context(role or "list").actions, width, 3)
 end
 
 local function focus_selected(owner)
@@ -424,8 +448,8 @@ local function render_float(owner)
         set_buffer(owner.detail.bufnr, details)
         apply_decorations(owner.detail.bufnr, detail_decorations)
     end
-    set_buffer(owner.footer.bufnr, { footer_text() })
-    add_hl(owner.footer.bufnr, 0, 0, -1, "TodoMuted")
+    set_buffer(owner.footer.bufnr, footer_lines(vim.api.nvim_win_get_width(owner.footer.winid), "list"))
+    hints.highlight(owner.footer.bufnr)
     focus_selected(owner)
 end
 
@@ -438,7 +462,8 @@ local function render_sidebar(owner)
     local lines = vim.list_extend(vim.deepcopy(header), { "" })
     local list_offset = #lines
     vim.list_extend(lines, list_lines)
-    lines[#lines + 1] = footer_text(true)
+    local footer_start = #lines
+    vim.list_extend(lines, footer_lines(width, "sidebar"))
     state.task_lines, state.task_order = {}, order
     for line, row in pairs(mappings) do
         state.task_lines[line + list_offset] = row
@@ -458,7 +483,7 @@ local function render_sidebar(owner)
         add_hl(owner.split.bufnr, #header - 1, 0, -1, "TodoMuted")
     end
     apply_decorations(owner.split.bufnr, decorations, list_offset)
-    add_hl(owner.split.bufnr, #lines - 1, 0, -1, "TodoMuted")
+    hints.highlight(owner.split.bufnr, footer_start, #lines)
     focus_selected(owner)
 end
 
@@ -789,6 +814,13 @@ local function menu(owner, title, items, on_submit)
     })
     owner.transient = component
     component:mount()
+    hints.attach(component.bufnr, function()
+        return { title = title, actions = {
+            { key = "j/k / Up/Down / Tab/Shift-Tab", label = L("Choose item", "选择条目") },
+            { key = "Enter", label = L("Confirm", "确认") },
+            { key = "q / Esc / Ctrl-c", label = L("Cancel", "取消") },
+        } }
+    end, { owner = owner })
     local dismiss = function()
         close_transient(owner)
         focus_list(owner)
@@ -1073,6 +1105,17 @@ local function postpone(source)
         owner.transient = input
         owner.transient_token = token
         input:mount()
+        hints.attach(input.bufnr, function(mode)
+            local entries = {
+                { key = "Enter", label = L("Postpone by entered duration", "按输入时长延期") },
+                { key = "Esc / Ctrl-q", label = L("Cancel", "取消") },
+            }
+            if mode == "n" then
+                entries[#entries + 1] = { key = "q", label = L("Cancel", "取消") }
+                entries[#entries + 1] = { key = "i", label = L("Edit duration", "输入时长") }
+            end
+            return { title = i18n.t("postpone_title"), actions = entries }
+        end, { owner = owner })
         local cancel = function()
             if owner.closed or state.owner ~= owner or owner.transient ~= input then
                 return
@@ -1103,6 +1146,7 @@ local function postpone(source)
                         return
                     end
                     local target_win = vim.api.nvim_get_current_win()
+                    if owner.help and owner.help.winid == target_win then return end
                     close_transient(owner)
                     if owner.mode == "float" and not owner_has_window(owner, target_win) then
                         M.close()
@@ -1145,6 +1189,17 @@ local function open_search()
     })
     owner.transient = search
     search:mount()
+    hints.attach(search.bufnr, function(mode)
+        local entries = {
+            { key = "Enter", label = L("Apply search", "应用搜索") },
+            { key = "Esc / Ctrl-q", label = L("Clear and return", "清除并返回") },
+        }
+        if mode == "n" then
+            entries[#entries + 1] = { key = "q", label = L("Clear and return", "清除并返回") }
+            entries[#entries + 1] = { key = "i", label = L("Edit query", "编辑搜索词") }
+        end
+        return { title = i18n.t("search"), actions = entries }
+    end, { owner = owner })
     -- Esc from either mode abandons the search: clear the query, drop the input,
     -- hand the cursor back to the list.
     local abandon = function()
@@ -1170,6 +1225,7 @@ local function open_search()
                     return
                 end
                 local target_win = vim.api.nvim_get_current_win()
+                if owner.help and owner.help.winid == target_win then return end
                 close_transient(owner)
                 if owner.mode == "float" and not owner_has_window(owner, target_win) then
                     M.close()
@@ -1183,35 +1239,27 @@ end
 
 local function show_help()
     local owner = state.owner
-    close_transient(owner)
-    local help = Popup({
-        relative = "editor",
-        position = "50%",
-        size = { width = math.max(10, math.min(90, vim.o.columns - 8)), height = 5 },
-        enter = true,
-        border = {
-            style = config.get().ui.float.border,
-            text = { top = " " .. i18n.t("help") .. " ", top_align = "center" },
-        },
-        win_options = { wrap = true, winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
-        zindex = 80,
-    })
-    owner.transient = help
-    help:mount()
-    vim.api.nvim_buf_set_lines(
-        help.bufnr,
-        0,
-        -1,
-        false,
-        { "", "  " .. i18n.t("panel_help"), "", "  h/l focus list or details   [/] change view" }
-    )
-    local close = function()
-        help:unmount()
-        owner.transient = nil
-        focus_list(owner)
+    local win = vim.api.nvim_get_current_win()
+    local role = owner.detail and owner.detail.winid == win and "detail"
+        or owner.detail_overlay and owner.detail_overlay.winid == win and "overlay"
+        or owner.split and "sidebar" or "list"
+    hints.show(function() return panel_context(role) end, { owner = owner })
+end
+
+local function dispatch_task(role, id, callback)
+    return function()
+        local task = context_task(role)
+        if not actions.allowed(task, id) then
+            vim.notify(L("This operation is unavailable for the current item", "当前条目不适用此操作"), vim.log.levels.WARN)
+            return
+        end
+        callback()
+        local owner = state.owner
+        if owner and owner.detail_overlay and owner.detail_overlay.winid
+            and vim.api.nvim_win_is_valid(owner.detail_overlay.winid) then
+            refresh_overlay(owner)
+        end
     end
-    vim.keymap.set("n", "q", close, { buffer = help.bufnr })
-    vim.keymap.set("n", "<Esc>", close, { buffer = help.bufnr })
 end
 
 local function render_overlay(overlay)
@@ -1287,18 +1335,25 @@ local function open_details()
     end
     vim.keymap.set("n", "q", close, { buffer = overlay.bufnr })
     vim.keymap.set("n", "<Esc>", close, { buffer = overlay.bufnr })
-    vim.keymap.set("n", "e", edit_task, { buffer = overlay.bufnr })
-    vim.keymap.set("n", "s", function()
-        change_status("in_progress")
-        render_overlay(overlay)
-    end, { buffer = overlay.bufnr })
-    vim.keymap.set("n", "x", function()
-        change_status("done")
-        render_overlay(overlay)
-    end, { buffer = overlay.bufnr })
-    vim.keymap.set("n", "p", function()
-        postpone("detail")
-    end, { buffer = overlay.bufnr })
+    local callbacks = {
+        edit = edit_task, start = function() change_status("in_progress") end,
+        done = function() change_status("done") end, cancel = function() change_status("cancelled") end,
+        reopen = function() change_status("todo") end,
+        archive = function() archive_task(false) end, restore = function() archive_task(true) end,
+        delete = delete_archived_task, postpone = function() postpone("detail") end,
+    }
+    local keys = { edit = "e", start = "s", done = "x", cancel = "c", reopen = "u", archive = "A", restore = "R", delete = "D", postpone = "p" }
+    for id, callback in pairs(callbacks) do
+        vim.keymap.set("n", keys[id], dispatch_task("overlay", id, callback), { buffer = overlay.bufnr, silent = true })
+    end
+    -- The persistent buffer can retain fixed-pane page actions from a prior
+    -- layout. The overlay owns only reading, task operations and its close keys.
+    for _, key in ipairs({ "a", "n", "/", "f", "[", "]", "v", "g", "r", "<Tab>", "za", "zM", "zR", "<CR>" }) do
+        pcall(vim.keymap.del, "n", key, { buffer = overlay.bufnr })
+    end
+    vim.keymap.set("n", "h", "h", { buffer = overlay.bufnr, silent = true })
+    require("todo.ui.history").attach(overlay.bufnr)
+    hints.attach(overlay.bufnr, function() return panel_context("overlay") end, { owner = owner })
     set_detail_navigation(overlay.bufnr)
 end
 
@@ -1399,6 +1454,34 @@ local function set_mappings(component, role)
         menu(state.owner, i18n.t("view"), items, change_view)
     end, opts("Choose view"))
     vim.keymap.set("n", "<CR>", open_details, opts("Open details"))
+    local callbacks = {
+        e = { "edit", edit_task }, s = { "start", function() change_status("in_progress") end },
+        x = { "done", function() change_status("done") end }, c = { "cancel", function() change_status("cancelled") end },
+        u = { "reopen", function() change_status("todo") end }, A = { "archive", function() archive_task(false) end },
+        R = { "restore", function() archive_task(true) end }, D = { "delete", delete_archived_task },
+        p = { "postpone", function() postpone(role == "detail" and "detail" or "list") end },
+    }
+    for key, value in pairs(callbacks) do
+        if key ~= "p" or role == "list" or role == "sidebar" or role == "detail" then
+            vim.keymap.set("n", key, dispatch_task(role, value[1], value[2]), opts(value[1]))
+        end
+    end
+    if role == "detail" then
+        for _, key in ipairs({ "<Tab>", "za", "zM", "zR" }) do
+            pcall(vim.keymap.del, "n", key, { buffer = buf })
+        end
+    end
+    require("todo.ui.history").attach(buf)
+    hints.attach(buf, function() return panel_context(role) end, {
+        owner = state.owner,
+        on_update = function(ctx)
+            local owner = state.owner
+            if owner and owner.footer and owner.footer.winid and vim.api.nvim_win_is_valid(owner.footer.winid) then
+                set_buffer(owner.footer.bufnr, hints.lines(ctx.actions, vim.api.nvim_win_get_width(owner.footer.winid), 3))
+                hints.highlight(owner.footer.bufnr)
+            end
+        end,
+    })
     if role == "list" and state.owner and state.owner.detail then
         vim.keymap.set("n", "l", function()
             vim.api.nvim_set_current_win(state.owner.detail.winid)
@@ -1468,7 +1551,7 @@ local function create_float(owner)
         Layout.Box({
             Layout.Box(owner.header, { size = math.max(2, #header_lines) }),
             body,
-            Layout.Box(owner.footer, { size = 1 }),
+            Layout.Box(owner.footer, { size = math.min(3, math.max(1, height - #header_lines - 4)) }),
         }, { dir = "col" })
     )
     owner.layout:mount()
@@ -1559,6 +1642,7 @@ function M.close()
         return
     end
     owner.closed = true
+    hints.close(owner)
     close_transient(owner)
     if owner.detail_overlay then
         pcall(function()
@@ -1592,6 +1676,7 @@ end
 function M.refresh()
     if owner_valid() then
         render()
+        refresh_overlay(state.owner)
     end
 end
 

@@ -176,6 +176,9 @@ local function reload_panel()
         _reconcile_reminders = function()
             RECONCILE = RECONCILE + 1
         end,
+        _reschedule_reminders = function()
+            RECONCILE = RECONCILE + 1
+        end,
     }
     return require("todo.ui.panel")
 end
@@ -414,6 +417,30 @@ test("future, completed and deadline-less tasks open no input", function()
         eq(transient(panel), nil, case.name .. " must not open the postpone input")
         eq(store.writes, 0, case.name .. " must not write")
         eq(store:get(1), before)
+        panel.close()
+    end
+end)
+
+test("detail actions change with completed and active task states", function()
+    for _, initial in ipairs({ "done", "cancelled" }) do
+        local store, _, panel = scenario({ task({ status = initial }) })
+        press("<CR>")
+        local owner = panel.inspect_state().owner
+        local overlay = assert(owner.detail_overlay)
+        local function text()
+            return table.concat(vim.api.nvim_buf_get_lines(overlay.bufnr, 0, -1, false), "\n")
+        end
+        assert(text():find("`s`", 1, true) and text():find("`u`", 1, true))
+        assert(not text():find("`p`", 1, true))
+        press("x")
+        eq(store.writes, 0, "completed item cannot complete again")
+        press("s")
+        eq(store:get(1).status, "in_progress")
+        assert(text():find("`p`", 1, true), "overdue active task should offer postpone")
+        assert(not text():find("`s`", 1, true), "already in progress must not offer start")
+        press("u")
+        eq(store:get(1).status, "todo")
+        assert(text():find("`s`", 1, true) and not text():find("`u`", 1, true))
         panel.close()
     end
 end)

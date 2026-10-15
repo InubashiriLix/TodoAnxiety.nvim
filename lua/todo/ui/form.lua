@@ -6,6 +6,9 @@ local model = require("todo.model")
 local CalendarState = require("todo.ui.calendar_state")
 local FormState = require("todo.ui.form_state")
 local TimeState = require("todo.ui.time_state")
+local context = require("todo.ui.context_forms")
+
+local hints = context.hints()
 
 local Input = require("nui.input")
 local Layout = require("nui.layout")
@@ -127,6 +130,22 @@ local function open_menu(owner, title, values, selected, on_submit, on_close)
     })
     owner.transient = menu
     menu:mount()
+    vim.keymap.set("n", "q", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
+    vim.keymap.set("n", "<C-q>", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
+    if owner.attach_hints then
+        owner.attach_hints(menu.bufnr, function()
+            local g = context.groups()
+            return {
+                title = title,
+                actions = {
+                    context.e("<CR>", "select", "选择", g.list, g.list),
+                    context.e("j/k / Up/Down / Tab/Shift-Tab", "move", "移动", g.nav, g.nav),
+                    context.e("q / Ctrl-q / Ctrl-c", "cancel", "取消", g.close, g.close),
+                    context.e("<Esc>", "cancel", "取消", g.close, g.close),
+                },
+            }
+        end)
+    end
 end
 
 local function render_text(component, value, hl)
@@ -158,7 +177,7 @@ function M.open(task, on_save, opts)
     local focusables = {}
     local focus_index = 1
     local tag_pending = ""
-    local save, request_close, render_tags, queue_render_tags, commit_tag, open_calendar, open_time_picker, open_tag_panel
+    local save, request_close, render_tags, queue_render_tags, commit_tag, open_calendar, open_time_picker, open_tag_panel, render_footer
     local open_duration_picker
 
     components.header = popup("", { border = false, focusable = false })
@@ -221,7 +240,161 @@ function M.open(task, on_save, opts)
         if target.insert then
             vim.cmd("startinsert")
         end
+        vim.schedule(render_footer)
     end
+
+    -- --- contextual hints -------------------------------------------------
+    local field_labels = {
+        i18n.t("title"),
+        i18n.t("priority"),
+        i18n.t("status"),
+        i18n.t("deadline"),
+        i18n.t("reminder_interval"),
+        i18n.t("add_tag"),
+        i18n.t("description"),
+    }
+
+    local function field_title(index)
+        return field_labels[index] or context.L("Form actions", "表单操作")
+    end
+
+    local function field_actions(index, mode)
+        local g = context.groups()
+        local out = {}
+        local insert_mode = mode == "i"
+        if index == 1 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            end
+        elseif index == 2 then
+            out[#out + 1] = context.e("0-3", "choose priority", "选择优先级", g.field, g.field)
+            out[#out + 1] = context.e("h/l / Left/Right", "cycle priority", "循环优先级", g.field, g.field)
+            out[#out + 1] = context.e("<CR>", "open menu", "打开菜单", g.field, g.field)
+        elseif index == 3 then
+            out[#out + 1] = context.e("1-4", "choose status", "选择状态", g.field, g.field)
+            out[#out + 1] = context.e("h/l / Left/Right", "cycle status", "循环状态", g.field, g.field)
+            out[#out + 1] = context.e("<CR>", "open menu", "打开菜单", g.field, g.field)
+        elseif index == 4 then
+            out[#out + 1] = context.e("<CR>", "calendar", "月历", g.field, g.field)
+            out[#out + 1] = context.e("c", "calendar", "月历", g.field, g.field)
+            out[#out + 1] = context.e("t", "edit time", "编辑时间", g.field, g.field)
+            out[#out + 1] = context.e("x", "clear deadline", "清除截止时间", g.field, g.field)
+        elseif index == 5 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("t", "duration picker", "时长选择器", g.field, g.field)
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            end
+        elseif index == 6 then
+            out[#out + 1] = context.e("<CR>", "create or choose tags", "创建或选择标签", g.field, g.field)
+            if insert_mode then
+                out[#out + 1] = context.e(",", "commit typed tag", "提交输入的标签", g.field, g.field)
+                out[#out + 1] = context.e("<BS>", "remove last tag when empty", "输入空时删除上个标签", g.field, g.field)
+            end
+        elseif index == 7 then
+            if insert_mode then
+                out[#out + 1] = context.e("<Tab>/<S-Tab>", "native editing / completion", "原生编辑／补全", g.edit, g.edit)
+                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+            else
+                out[#out + 1] = context.e("<CR>", "go to footer", "前往底部", g.nav, g.nav)
+            end
+        elseif index == 8 then
+            out[#out + 1] = context.e("<CR>", "first field", "回到首个字段", g.nav, g.nav)
+        end
+
+        if insert_mode then
+            if index == 1 or index == 5 then
+                out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
+            elseif index == 7 then
+                out[#out + 1] = context.e("<CR>", "new line", "换行", g.edit, g.edit)
+            end
+            local has_escape = false
+            for _, action in ipairs(out) do if action.key == "<Esc>" then has_escape = true end end
+            if not has_escape then
+                out[#out + 1] = context.e("<Esc>", "leave insert", "退出插入模式", g.edit, g.edit)
+            end
+        elseif index == 1 or index == 5 or index == 6 or index == 7 then
+            out[#out + 1] = context.e("i/a", "edit text", "编辑文本", g.edit, g.edit)
+            if index == 7 then
+                out[#out + 1] = context.e("j/k, gg/G", "read description", "浏览描述", g.nav, g.nav)
+            end
+        end
+
+        -- Shared form controls. Insert mode hides the n-only quit/switch keys.
+        if insert_mode then
+            if index ~= 7 then
+                out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
+                out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
+            end
+            out[#out + 1] = context.e("<C-s>", "save", "保存", g.submit, g.submit)
+            out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
+        else
+            out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
+            out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
+            out[#out + 1] = context.e("<C-s>", "save", "保存", g.submit, g.submit)
+            out[#out + 1] = context.e("q", "close", "关闭", g.close, g.close)
+            out[#out + 1] = context.e("<Esc>", "close", "关闭", g.close, g.close)
+            out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
+        end
+        return out
+    end
+
+    local function make_provider(index)
+        return function(mode)
+            focus_index = index
+            return { title = field_title(index), actions = field_actions(index, mode) }
+        end
+    end
+
+    local function footer_provider(mode)
+        return {
+            title = context.L("Form help", "表单帮助"),
+            actions = field_actions(focus_index, mode),
+        }
+    end
+
+    render_footer = function(current_context)
+        if owner.closed or not vim.api.nvim_buf_is_valid(components.footer.bufnr) then
+            return
+        end
+        local raw = vim.api.nvim_get_mode().mode
+        local mode = raw:sub(1, 1) == "i" and "i" or "n"
+        local ctx = current_context or footer_provider(mode)
+        local width = 80
+        if components.footer.winid and vim.api.nvim_win_is_valid(components.footer.winid) then
+            width = math.max(20, vim.api.nvim_win_get_width(components.footer.winid))
+        end
+        local lines = hints.lines(ctx.actions, width, 3)
+        if type(lines) ~= "table" or #lines == 0 then
+            lines = { " " .. context.L("Press F1 for contextual help", "按 F1 查看上下文帮助") }
+        end
+        write_display(components.footer, function()
+            vim.api.nvim_buf_clear_namespace(components.footer.bufnr, components.footer.ns_id, 0, -1)
+            vim.api.nvim_buf_set_lines(components.footer.bufnr, 0, -1, false, lines)
+            hints.highlight(components.footer.bufnr)
+        end)
+    end
+
+    local function attach_hints(bufnr, provider, on_update)
+        if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+            return
+        end
+        hints.attach(bufnr, provider, {
+            owner = owner,
+            on_update = function(ctx)
+                if on_update then
+                    on_update(ctx)
+                end
+                render_footer(ctx)
+            end,
+        })
+
+    end
+    owner.attach_hints = attach_hints
+    -- ----------------------------------------------------------------------
 
     local function render_priority()
         write_display(components.priority, function()
@@ -327,6 +500,17 @@ function M.open(task, on_save, opts)
         require("todo.ui.tag_panel").open({
             title = "tag_selector",
             selected = state:get("tags"),
+            is_owner_window = function(win)
+                if owner.transient and owner.transient.winid == win then
+                    return true
+                end
+                for _, component in pairs(components) do
+                    if component.winid == win then
+                        return true
+                    end
+                end
+                return false
+            end,
             on_change = function(tags)
                 state:set("tags", tags)
                 render_tags()
@@ -450,6 +634,22 @@ function M.open(task, on_save, opts)
 
         time_popup:mount()
         render_time()
+        attach_hints(time_popup.bufnr, function()
+            local g = context.groups()
+            return {
+                title = i18n.t("choose_time"),
+                actions = {
+                    context.e("h/l / Left/Right / Tab", "switch field", "切换字段", g.nav, g.nav),
+                    context.e("j/k", "adjust ±1", "调整 ±1", g.picker, g.picker),
+                    context.e("J/K", "adjust ±5", "调整 ±5", g.picker, g.picker),
+                    context.e("0-9", "type HHMM", "输入 HHMM", g.picker, g.picker),
+                    context.e("<CR>", "apply time", "应用时间", g.submit, g.submit),
+                    context.e("a", "end of day", "当天结束", g.picker, g.picker),
+                    context.e("q / Ctrl-q / Ctrl-c", "cancel", "取消", g.close, g.close),
+                    context.e("<Esc>", "cancel", "取消", g.close, g.close),
+                },
+            }
+        end)
         local map = function(key, callback)
             vim.keymap.set("n", key, callback, { buffer = time_popup.bufnr, silent = true })
         end
@@ -581,6 +781,22 @@ function M.open(task, on_save, opts)
 
         calendar_popup:mount()
         render_calendar()
+        attach_hints(calendar_popup.bufnr, function()
+            local g = context.groups()
+            return {
+                title = i18n.t("calendar"),
+                actions = {
+                    context.e("hjkl", "move by day or week", "按日或周移动", g.nav, g.nav),
+                    context.e("[] / H/L / PageUp/PageDown", "previous / next month", "上个 / 下个月", g.nav, g.nav),
+                    context.e("g", "jump to today", "跳到今天", g.picker, g.picker),
+                    context.e("<CR>", "apply date", "应用日期", g.submit, g.submit),
+                    context.e("t", "edit time", "编辑时间", g.picker, g.picker),
+                    context.e("x", "clear deadline", "清除截止时间", g.picker, g.picker),
+                    context.e("q / Ctrl-q / Ctrl-c", "cancel", "取消", g.close, g.close),
+                    context.e("<Esc>", "cancel", "取消", g.close, g.close),
+                },
+            }
+        end)
         local map = function(key, callback)
             vim.keymap.set("n", key, callback, { buffer = calendar_popup.bufnr, silent = true })
         end
@@ -731,6 +947,7 @@ function M.open(task, on_save, opts)
     end
 
     local size = form_size()
+    local footer_size = math.max(1, math.min(3, size.height - 18))
     local box = Layout.Box({
         Layout.Box(components.header, { size = 1 }),
         Layout.Box(components.title, { size = 3 }),
@@ -745,7 +962,7 @@ function M.open(task, on_save, opts)
         Layout.Box(components.tag_chips, { size = 4 }),
         Layout.Box(components.tag_input, { size = 3 }),
         Layout.Box(components.description, { grow = 1 }),
-        Layout.Box(components.footer, { size = 1 }),
+        Layout.Box(components.footer, { size = footer_size }),
     }, { dir = "col" })
     owner.layout = Layout({ relative = "editor", position = "50%", size = size }, box)
 
@@ -759,6 +976,8 @@ function M.open(task, on_save, opts)
                 owner.transient:unmount()
             end)
         end
+        hints.close(owner)
+
         if owner.tag_panel_open then
             pcall(function()
                 require("todo.ui.tag_panel").close()
@@ -841,23 +1060,28 @@ function M.open(task, on_save, opts)
         )
     end
 
-    local function map_focus(component, index)
+    local function map_focus(component, index, opts)
+        opts = opts or {}
         vim.keymap.set("n", "<Tab>", function()
             focus(index + 1)
-        end, { buffer = component.bufnr })
-        vim.keymap.set("i", "<Tab>", function()
-            vim.schedule(function()
-                focus(index + 1)
-            end)
         end, { buffer = component.bufnr })
         vim.keymap.set("n", "<S-Tab>", function()
             focus(index - 1)
         end, { buffer = component.bufnr })
-        vim.keymap.set("i", "<S-Tab>", function()
-            vim.schedule(function()
-                focus(index - 1)
-            end)
-        end, { buffer = component.bufnr })
+        -- Description keeps native Insert-mode Tab/completion; only normal-mode
+        -- Tab/Shift-Tab switch fields. Other fields keep the existing behaviour.
+        if not opts.skip_insert_tab then
+            vim.keymap.set("i", "<Tab>", function()
+                vim.schedule(function()
+                    focus(index + 1)
+                end)
+            end, { buffer = component.bufnr })
+            vim.keymap.set("i", "<S-Tab>", function()
+                vim.schedule(function()
+                    focus(index - 1)
+                end)
+            end, { buffer = component.bufnr })
+        end
         vim.keymap.set("n", "q", request_close, { buffer = component.bufnr })
         -- Normal-mode Esc only; insert-mode Esc must still leave insert.
         vim.keymap.set("n", "<Esc>", request_close, { buffer = component.bufnr })
@@ -871,7 +1095,9 @@ function M.open(task, on_save, opts)
         end, { buffer = component.bufnr })
     end
     for index, target in ipairs(focusables) do
-        map_focus(target.component, index)
+        map_focus(target.component, index, {
+            skip_insert_tab = target.component == components.description,
+        })
     end
 
     local function enter_next(component, index)
@@ -966,7 +1192,10 @@ function M.open(task, on_save, opts)
     components.tag_input.border:set_text("bottom", " " .. i18n.t("tag_input_hint") .. " ", "right")
     components.reminder_interval.border:set_text("bottom", " " .. i18n.t("duration_picker_hint") .. " ", "right")
 
-    local footer_text = " " .. i18n.t("form_footer")
+    for index, target in ipairs(focusables) do
+        local provider = index == 8 and footer_provider or make_provider(index)
+        attach_hints(target.component.bufnr, provider)
+    end
 
     owner.layout:mount()
     current = owner
@@ -980,8 +1209,7 @@ function M.open(task, on_save, opts)
         vim.split(state:get("description") ~= "" and state:get("description") or "", "\n", { plain = true })
     )
     vim.bo[components.description.bufnr].modifiable = true
-    set_lines(components.footer, { footer_text })
-    vim.api.nvim_buf_add_highlight(components.footer.bufnr, components.footer.ns_id, "TodoMuted", 0, 0, -1)
+    render_footer()
 
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
         buffer = components.description.bufnr,

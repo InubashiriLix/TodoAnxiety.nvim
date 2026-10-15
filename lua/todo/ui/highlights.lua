@@ -34,10 +34,27 @@ local links = {
     TodoSectionHeader = "Folded",
 }
 
+local function fg_of(group)
+    local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = group, link = false })
+    if ok and type(hl) == "table" then
+        return hl.fg
+    end
+end
+
 function M.setup()
     for name, target in pairs(links) do
         vim.api.nvim_set_hl(0, name, { default = true, link = target })
     end
+    -- Dynamic hint text: normal fg, explicitly not bold/italic, no forced bg.
+    local hint_text = { default = true, bold = false, italic = false }
+    local normal_fg = fg_of("Normal")
+    if normal_fg then hint_text.fg = normal_fg end
+    vim.api.nvim_set_hl(0, "TodoHintText", hint_text)
+    -- Key tokens: Special fg, bold, not italic, no forced bg.
+    local hint_key = { default = true, bold = true, italic = false }
+    local special_fg = fg_of("Special")
+    if special_fg then hint_key.fg = special_fg end
+    vim.api.nvim_set_hl(0, "TodoHintKey", hint_key)
 end
 
 function M.tag(name)

@@ -88,13 +88,12 @@ function M.task_lines(task, opts)
     )
     if opts.actions ~= false then
         lines[#lines + 1] = ""
-        -- A quote block rather than [ e Edit ]: brackets would parse as a link.
-        lines[#lines + 1] = string.format(
-            "> `e` %s · `s` %s · `x` %s",
-            i18n.t("action_edit"),
-            i18n.t("in_progress"),
-            i18n.t("done")
-        )
+        local tokens = {}
+        for _, action in ipairs(require("todo.ui.actions").task_actions(task, opts.now)) do
+            tokens[#tokens + 1] = "`" .. action.key .. "` " .. action.label
+        end
+        lines[#lines + 1] = "> " .. table.concat(tokens, " · ")
+
     end
     return lines
 end
