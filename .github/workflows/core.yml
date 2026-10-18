@@ -24,7 +24,7 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: todo-core-macos-arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: todo-core-macos-x86_64
           - os: windows-latest
