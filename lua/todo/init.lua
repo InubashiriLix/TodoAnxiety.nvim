@@ -6,10 +6,33 @@ local store_instance
 local service_instance
 local scheduler_instance
 local sync_handle
+local cloud_stop
+local ai_instance
 local registered_maps = {}
 local highlights_registered = false
 
 local function close_store()
+    if package.loaded["todo.ui.daily"] then
+        package.loaded["todo.ui.daily"].close()
+    end
+    local planner_ui = package.loaded["todo.ui.planner"]
+    if planner_ui then
+        planner_ui.close()
+    end
+    local network_ui = package.loaded["todo.ui.network_progress"]
+    if network_ui then
+        network_ui.close()
+    end
+    if cloud_stop then
+        cloud_stop()
+        cloud_stop = nil
+    end
+    if ai_instance then
+        for _, handle in pairs(ai_instance.active) do
+            handle.cancel()
+        end
+        ai_instance = nil
+    end
     if sync_handle then
         sync_handle.cancel()
         sync_handle = nil
@@ -172,7 +195,26 @@ function M.setup(opts)
     if old_path ~= result.db_path then
         close_store()
     end
+    if cloud_stop then
+        cloud_stop()
+        cloud_stop = nil
+    end
+    if ai_instance then
+        for _, handle in pairs(ai_instance.active) do
+            handle.cancel()
+        end
+    end
+    ai_instance = nil
     register_keymaps()
+    if result.sync.enabled and result.sync.provider == "server" then
+        vim.schedule(function()
+            local workspace = require("todo.workspace").new(M._service().store)
+            cloud_stop = require("todo.cloud").start_auto(workspace, result.sync, function()
+                require("todo.ui.panel").refresh()
+                M._reconcile_reminders()
+            end)
+        end)
+    end
     if result.reminders.enabled then
         vim.schedule(start_scheduler)
     else
@@ -203,6 +245,7 @@ function M._service()
     end
     local Store = require("todo.store")
     store_instance = Store.open(config.get().db_path)
+    require("todo.workspace").new(store_instance)
     service_instance = require("todo.service").new(store_instance)
     return service_instance
 end
@@ -224,6 +267,24 @@ function M._reconcile_reminders()
 end
 
 function M.sync()
+    local sync_opts = config.get().sync
+    if sync_opts.enabled and sync_opts.provider == "server" then
+        sync_handle = require("todo.cloud").run(
+            require("todo.workspace").new(M._service().store),
+            sync_opts,
+            function(err, result)
+                sync_handle = nil
+                if err then
+                    vim.notify(err, vim.log.levels.ERROR)
+                else
+                    require("todo.ui.panel").refresh()
+                    M._reconcile_reminders()
+                    vim.notify("Sync complete · " .. result.pending .. " pending")
+                end
+            end
+        )
+        return
+    end
     local progress = require("todo.ui.sync_progress")
     if sync_handle and sync_handle.running then
         progress.busy()
@@ -253,6 +314,11 @@ function M.sync()
 end
 
 function M.sync_status()
+    if config.get().sync.provider == "server" then
+        local status = require("todo.workspace").new(M._service().store):cloud_status()
+        vim.notify(vim.inspect(status), vim.log.levels.INFO, { title = "Todo server sync" })
+        return status
+    end
     local store = M._service().store
     local status = require("todo.sync.store").status(store)
     local success = status.last_success and os.date("%Y-%m-%d %H:%M:%S", status.last_success) or "—"
@@ -271,6 +337,39 @@ function M.sync_status()
     return status
 end
 
+function M._ai()
+    if not ai_instance then
+        ai_instance = require("todo.ai").new(require("todo.workspace").new(M._service().store), M._service())
+    end
+    return ai_instance
+end
+function M.today(date)
+    local ws = require("todo.workspace").new(M._service().store)
+    local planner = require("todo.planning").new(ws, M._service())
+    date = date and date ~= "" and date or planner:date()
+    assert(require("todo.model").parse_deadline(date), "invalid planning date")
+    ws.store:set_setting("planning_view_date", date)
+    M.open({ view = "today" })
+end
+function M.plan(opts)
+    return require("todo.ui.daily").open(opts)
+end
+function M.clarify(id)
+    require("todo.ui.planner").sessions({ task_id = id })
+end
+function M.ai_usage()
+    local u = M._ai():usage()
+    vim.notify(
+        string.format(
+            "AI estimated: $%.6f · today $%.6f · %d requests · %d unknown costs",
+            u.usd,
+            u.today_usd,
+            u.requests,
+            u.unknown
+        )
+    )
+    return u
+end
 function M.open(opts)
     require("todo.ui.panel").open(opts)
 end
@@ -280,6 +379,9 @@ function M.toggle(opts)
 end
 
 function M.close()
+    if package.loaded["todo.ui.daily"] then
+        require("todo.ui.daily").close()
+    end
     require("todo.ui.panel").close()
 end
 
@@ -301,8 +403,13 @@ function M.add(opts)
     require("todo.ui.form").open({
         title = opts.title or "",
         reminder = last_interval and { repeat_interval_seconds = last_interval } or nil,
-    }, function(input)
-        local result, errors = M._service():create(input)
+    }, function(input, saved_task)
+        local result, errors
+        if saved_task and saved_task.id then
+            result, errors = M._service():update(saved_task.id, input, saved_task.sync_revision)
+        else
+            result, errors = M._service():create(input)
+        end
         if result then
             require("todo.ui.panel").refresh()
             start_scheduler()
@@ -343,6 +450,7 @@ function M.edit(id)
     require(form_module).open(task, function(input)
         local result, errors = M._service():update(id, input, task.sync_revision)
         if result then
+            task = result
             require("todo.ui.panel").refresh()
             start_scheduler()
         end

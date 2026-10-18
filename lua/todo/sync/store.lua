@@ -154,6 +154,15 @@ local function append(store, delta)
     codec.validate(event)
     record(store, event, false)
     materialize(store)
+    if store.workspace then
+        store.workspace:observe()
+    end
+end
+
+function M.apply_local(store, delta)
+    return store:transaction(function()
+        append(store, delta)
+    end)
 end
 
 function M.initialize(store)
@@ -323,6 +332,9 @@ function M.import(store, payloads)
         end
         if count > 0 then
             materialize(store)
+            if store.workspace then
+                store.workspace:observe()
+            end
         end
         return count
     end)

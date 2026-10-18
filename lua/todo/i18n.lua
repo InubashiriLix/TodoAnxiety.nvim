@@ -1,5 +1,7 @@
 local messages = {
     en = {
+        today = "Today",
+        today_short = "Today",
         sync_disabled = "Sync is disabled; configure sync.enabled and sync.remote first",
         sync_busy = "A sync is already running for this database",
         sync_started = "Sync started",
@@ -195,6 +197,8 @@ local messages = {
         relative_overdue = "overdue",
     },
     ["zh-CN"] = {
+        today = "今日",
+        today_short = "今日",
         sync_disabled = "同步未启用，请先配置 sync.enabled 和 sync.remote",
         sync_busy = "此数据库已有同步任务正在运行",
         sync_started = "开始同步",

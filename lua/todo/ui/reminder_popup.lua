@@ -46,7 +46,9 @@ function M.show(task, callback)
         end
         owner.closed = true
         if owner.help then
-            pcall(function() owner.help:unmount() end)
+            pcall(function()
+                owner.help:unmount()
+            end)
             owner.help = nil
         end
         if owner.component then
@@ -93,8 +95,10 @@ function M.show(task, callback)
             relative = "editor",
             position = "50%",
             size = { width = math.max(10, math.min(58, vim.o.columns - 6)) },
-            border = { style = config.get().ui.float.border,
-                text = { top = " " .. i18n.t(action == "postpone" and "postpone_title" or "snooze") .. " " } },
+            border = {
+                style = config.get().ui.float.border,
+                text = { top = " " .. i18n.t(action == "postpone" and "postpone_title" or "snooze") .. " " },
+            },
             zindex = 210,
         }, {
             default_value = initial,
@@ -136,9 +140,12 @@ function M.show(task, callback)
         for _, key in ipairs({ "q", "<Esc>" }) do
             vim.keymap.set("n", key, cancel, { buffer = input.bufnr, silent = true })
         end
-        vim.keymap.set("i", "<Esc>", function() vim.schedule(cancel) end, { buffer = input.bufnr, silent = true })
-        vim.keymap.set({ "n", "i" }, "<C-q>", function() vim.schedule(cancel) end,
-            { buffer = input.bufnr, silent = true })
+        vim.keymap.set("i", "<Esc>", function()
+            vim.schedule(cancel)
+        end, { buffer = input.bufnr, silent = true })
+        vim.keymap.set({ "n", "i" }, "<C-q>", function()
+            vim.schedule(cancel)
+        end, { buffer = input.bufnr, silent = true })
         hints.attach(input.bufnr, function(mode)
             local entries = {
                 entry("Enter", L("Apply duration", "应用时长")),
@@ -158,11 +165,16 @@ function M.show(task, callback)
         local reminder = task.reminder or {}
         local function context()
             local entries = {
-                entry("d", task.kind == "notice" and L("Complete occurrence", "完成本轮") or L("Complete task", "完成任务")),
+                entry(
+                    "d",
+                    task.kind == "notice" and L("Complete occurrence", "完成本轮")
+                        or L("Complete task", "完成任务")
+                ),
                 entry("s", L("Snooze reminders", "稍后提醒")),
             }
             if eligible() then
-                entries[#entries + 1] = entry("p", L("Postpone deadline (1d default)", "延期截止时间（默认1d）"))
+                entries[#entries + 1] =
+                    entry("p", L("Postpone deadline (1d default)", "延期截止时间（默认1d）"))
             end
             entries[#entries + 1] = entry("a", L("Archive", "归档"))
             vim.list_extend(entries, require("todo.ui.history").actions())
@@ -171,17 +183,23 @@ function M.show(task, callback)
         end
         local width = math.max(10, math.min(68, vim.o.columns - 6))
         local lines = {
-            "", "  " .. task.title, "",
+            "",
+            "  " .. task.title,
+            "",
             "  " .. i18n.t("trigger") .. ": " .. os.date("%Y-%m-%d %H:%M:%S", reminder.scheduled_at or os.time()),
-            "  " .. i18n.t("reminder_interval") .. ": " .. duration.format(reminder.repeat_interval_seconds), "",
+            "  " .. i18n.t("reminder_interval") .. ": " .. duration.format(reminder.repeat_interval_seconds),
+            "",
         }
         vim.list_extend(lines, hints.lines(context().actions, width, 3))
         local popup = Popup({
-            relative = "editor", position = "50%",
+            relative = "editor",
+            position = "50%",
             size = { width = width, height = math.max(1, math.min(#lines, vim.o.lines - 6)) },
             enter = true,
-            border = { style = config.get().ui.float.border,
-                text = { top = " " .. i18n.t("reminder_due") .. " ", top_align = "center" } },
+            border = {
+                style = config.get().ui.float.border,
+                text = { top = " " .. i18n.t("reminder_due") .. " ", top_align = "center" },
+            },
             win_options = { wrap = true, winhighlight = "Normal:NormalFloat,FloatBorder:TodoPriority0" },
             zindex = 200,
         })
@@ -194,12 +212,20 @@ function M.show(task, callback)
         local map = function(key, cb)
             vim.keymap.set("n", key, cb, { buffer = popup.bufnr, silent = true })
         end
-        map("d", function() finish("complete") end)
-        map("a", function() finish("archive") end)
+        map("d", function()
+            finish("complete")
+        end)
+        map("a", function()
+            finish("archive")
+        end)
         for _, key in ipairs({ "q", "<Esc>", "<C-q>" }) do
-            map(key, function() finish("dismiss") end)
+            map(key, function()
+                finish("dismiss")
+            end)
         end
-        map("s", function() open_duration("snooze", duration.format(reminder.repeat_interval_seconds)) end)
+        map("s", function()
+            open_duration("snooze", duration.format(reminder.repeat_interval_seconds))
+        end)
         map("p", function()
             if eligible() then
                 open_duration("postpone", "1d")

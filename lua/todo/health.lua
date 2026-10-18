@@ -90,6 +90,25 @@ function M.check()
     vim.health.start("todo.nvim sync (local checks only)")
     if not cfg.sync.enabled then
         vim.health.info("Git sync is disabled")
+    elseif cfg.sync.provider == "server" then
+        if vim.fn.executable("curl") == 1 then
+            vim.health.ok("curl is available for asynchronous server sync")
+        else
+            vim.health.error("curl is required for server sync")
+        end
+        local configured, token = pcall(require("todo.secrets").sync, cfg.sync)
+        if configured and token then
+            vim.health.ok("Sync token configured")
+        else
+            vim.health.error("Sync token missing or invalid; configure sync.token_file, sync.token or sync.token_env")
+        end
+        if cfg.sync.url:match("^http://") then
+            vim.health.warn("HTTP does not encrypt tasks or tokens; enable allow_http explicitly")
+        end
+        if not cfg.sync.tls_verify then
+            vim.health.warn("Certificate verification is disabled for this sync endpoint")
+        end
+        vim.health.info("Server is checked only during sync; :Todo diagnostics shows network failures")
     else
         if vim.fn.executable("git") == 1 then
             vim.health.ok("Git is available; authentication is checked only by :Todo sync")
@@ -112,6 +131,53 @@ function M.check()
             vim.health.error("Sync directory is not writable: " .. directory)
         end
     end
+
+    vim.health.start("todo.nvim AI and attachments (local checks only)")
+    if cfg.ai.enabled then
+        if vim.fn.executable("curl") == 1 then
+            vim.health.ok("curl is available for asynchronous AI requests")
+        else
+            vim.health.error("curl is required for AI")
+        end
+        vim.health.info("Permission mode: " .. cfg.ai.mode .. "; scopes and approvals are device-local")
+        if vim.fn.executable("bwrap") == 1 then
+            vim.health.ok("bubblewrap found; command tools fail closed if the OS blocks sandbox creation")
+        else
+            vim.health.info(
+                "Sandbox commands unavailable: install bubblewrap on Linux; file/web tools remain available"
+            )
+        end
+        if vim.fn.executable("rg") == 1 then
+            vim.health.ok("ripgrep is available for bounded text search")
+        else
+            vim.health.info("Local text search needs ripgrep (rg)")
+        end
+        local valid, key, source = pcall(require("todo.credentials").get)
+        if valid and key then
+            vim.health.ok("AI key configured: " .. source)
+        else
+            vim.health.warn("AI key missing; use :Todo ai key")
+        end
+        vim.health.info(
+            "Question limit "
+                .. cfg.ai.max_questions
+                .. ", request limit "
+                .. cfg.ai.max_requests
+                .. "; charges are estimates"
+        )
+    else
+        vim.health.info("AI is disabled; local Today planning remains available")
+    end
+    if vim.fn.executable("wl-paste") == 1 or vim.fn.executable("xclip") == 1 or cfg.attachments.clipboard_command then
+        vim.health.ok("An image clipboard provider is available")
+    else
+        vim.health.info("Image clipboard unavailable; use file import")
+    end
+    local image_ok = pcall(require, "image")
+    vim.health.info(
+        image_ok and "image.nvim is available for inline images"
+            or "Inline images optional: install image.nvim, or use gx to open images"
+    )
 
     for name, lhs in pairs(cfg.keymaps) do
         if lhs == false then

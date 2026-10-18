@@ -63,10 +63,15 @@ function M:_drain()
                 or errors and errors.eligible and "postpone_ineligible"
                 or errors and errors.duration and "postpone_invalid"
                 or errors and errors.id and "postpone_not_found"
-            vim.notify(key and i18n.t(key) or i18n.t("db_error", tostring(ok and vim.inspect(errors) or result)),
-                vim.log.levels.ERROR)
+            vim.notify(
+                key and i18n.t(key) or i18n.t("db_error", tostring(ok and vim.inspect(errors) or result)),
+                vim.log.levels.ERROR
+            )
         elseif action == "postpone" and type(result) == "table" then
-            vim.notify(require("todo.i18n").t("postponed", require("todo.model").deadline_text(result)), vim.log.levels.INFO)
+            vim.notify(
+                require("todo.i18n").t("postponed", require("todo.model").deadline_text(result)),
+                vim.log.levels.INFO
+            )
         end
 
         pcall(function()

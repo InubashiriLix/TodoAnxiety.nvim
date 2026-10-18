@@ -70,6 +70,18 @@ function M.task_lines(task, opts)
     lines[#lines + 1] = ""
     lines[#lines + 1] = "---"
     lines[#lines + 1] = ""
+    if task.planning then
+        local zh = require("todo.config").get().language == "zh-CN"
+        lines[#lines + 1] = "## " .. (zh and "计划安排" or "Execution plan")
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = item(
+            field(zh and "预计时间" or "Estimate", tostring(task.planning.minutes or 0) .. "m"),
+            field(zh and "锁定" or "Locked", tostring(task.planning.locked == true))
+        )
+        lines[#lines + 1] = field(zh and "下一步" or "Next action", task.planning.next_action)
+        lines[#lines + 1] = field(zh and "完成标准" or "Done when", task.planning.completion)
+        lines[#lines + 1] = ""
+    end
     lines[#lines + 1] = "## " .. i18n.t("description")
     lines[#lines + 1] = ""
     if task.description ~= nil and task.description ~= "" then
@@ -78,6 +90,26 @@ function M.task_lines(task, opts)
         lines[#lines + 1] = "*" .. i18n.t("no_description") .. "*"
     end
     lines[#lines + 1] = ""
+    local loaded = package.loaded.todo
+    local svc = loaded and loaded._existing_service and loaded._existing_service()
+    if svc and svc.store.workspace then
+        local notes = {}
+        for _, r in ipairs(opts.notes or svc.store.workspace:list("note")) do
+            if r.value.task_uuid == task.sync_uuid then
+                notes[#notes + 1] = r.value
+            end
+        end
+        if #notes > 0 then
+            table.sort(notes, function(a, b)
+                return a.created_at < b.created_at
+            end)
+            lines[#lines + 1] = "## " .. (require("todo.config").get().language == "zh-CN" and "备注" or "Notes")
+            for _, note in ipairs(notes) do
+                lines[#lines + 1] = "**" .. note.source .. "**"
+                vim.list_extend(lines, vim.split(note.text, "\n", { plain = true }))
+            end
+        end
+    end
     lines[#lines + 1] = "---"
     lines[#lines + 1] = string.format(
         "*%s %s · %s %s*",
@@ -93,7 +125,6 @@ function M.task_lines(task, opts)
             tokens[#tokens + 1] = "`" .. action.key .. "` " .. action.label
         end
         lines[#lines + 1] = "> " .. table.concat(tokens, " · ")
-
     end
     return lines
 end
@@ -104,6 +135,11 @@ end
 function M.attach(bufnr)
     if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
         return false
+    end
+    local todo = package.loaded.todo
+    local svc = todo and todo._existing_service and todo._existing_service()
+    if svc then
+        require("todo.assets").attach(bufnr, svc.store, { readonly = not vim.bo[bufnr].modifiable })
     end
     if not require("todo.config").get().ui.markdown then
         return false

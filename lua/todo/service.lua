@@ -207,6 +207,39 @@ local function open_only(tasks)
 end
 
 function M:list(view, filters, now)
+    if view == "today" then
+        local ws = require("todo.workspace").new(self.store)
+        local planner = require("todo.planning").new(ws, self)
+        local plan = planner:today()
+        local result, seen = {}, {}
+        for _, item in ipairs(plan.items) do
+            local task = planner:task(item.task_uuid)
+            if task and not task.archived_at and matches(task, filters or {}) then
+                task.planning = item
+                result[#result + 1] = task
+                seen[task.sync_uuid] = true
+            end
+        end
+        for _, r in ipairs(ws:list("plan")) do
+            if r.key < plan.date then
+                for _, item in ipairs(r.value.items or {}) do
+                    local task = planner:task(item.task_uuid)
+                    if
+                        task
+                        and not seen[task.sync_uuid]
+                        and not task.archived_at
+                        and (task.status == "todo" or task.status == "in_progress")
+                        and matches(task, filters or {})
+                    then
+                        task.planning = vim.tbl_extend("force", item, { group = "review", previous_date = r.key })
+                        result[#result + 1] = task
+                        seen[task.sync_uuid] = true
+                    end
+                end
+            end
+        end
+        return result
+    end
     local tasks = self.store:list({ archived = view == "archived" })
     if view == "notices" then
         tasks = vim.tbl_filter(function(task)
@@ -345,6 +378,9 @@ function M:undo()
         return nil, { history = "empty" }
     end
     local entry = history:peek_undo()
+    if entry.custom then
+        return history:apply_custom("undo")
+    end
     local current = self.store:get(entry.id)
     if not history:revision_ok(current, entry.expected_revision) or not history:matches(current, entry.after) then
         return nil, { history = "conflict" }
@@ -363,6 +399,9 @@ function M:redo()
         return nil, { history = "empty" }
     end
     local entry = history:peek_redo()
+    if entry.custom then
+        return history:apply_custom("redo")
+    end
     local current = self.store:get(entry.id)
     if not history:revision_ok(current, entry.expected_revision) or not history:matches(current, entry.before) then
         return nil, { history = "conflict" }

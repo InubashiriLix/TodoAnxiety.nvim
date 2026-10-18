@@ -1,0 +1,46 @@
+[package]
+name = "todoanxiety-sync"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "TodoAnxiety.nvim sync server: store-and-forward sync, blobs, leases (protocol v1)"
+license = "MIT"
+readme = "README.md"
+default-run = "todoanxiety-sync"
+
+[[bin]]
+name = "todoanxiety-sync"
+path = "src/main.rs"
+
+[lib]
+name = "todoanxiety_sync"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dependencies]
+axum = "0.8.9"
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+base64 = "0.23.1"
+bytes = "1.12.1"
+hex = "0.4.3"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.10"
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+uuid = { version = "1.26.1", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tempfile = "3.27.0"
+tower = { version = "0.5.3", features = ["util"] }

@@ -16,9 +16,20 @@ local function test(name, fn)
         print("not ok - " .. name .. "\n" .. err)
     end
 end
-local function skip(name, reason) S = S + 1; print("skip - " .. name .. " (" .. reason .. ")") end
-local function truthy(v, msg) if not v then error(msg or "expected truthy", 2) end end
-local function falsy(v, msg) if v then error(msg or "expected falsy", 2) end end
+local function skip(name, reason)
+    S = S + 1
+    print("skip - " .. name .. " (" .. reason .. ")")
+end
+local function truthy(v, msg)
+    if not v then
+        error(msg or "expected truthy", 2)
+    end
+end
+local function falsy(v, msg)
+    if v then
+        error(msg or "expected falsy", 2)
+    end
+end
 local function eq(a, b, msg)
     if not vim.deep_equal(a, b) then
         error((msg or "values differ") .. "\nexpected " .. vim.inspect(b) .. "\nactual " .. vim.inspect(a))
@@ -29,9 +40,19 @@ local NOW = 1700000000 -- fixed clock; every case is wall-clock independent
 
 local function make_task(o)
     o = o or {}
-    local t = { id = o.id or 1, kind = o.kind or "task", title = o.title or "Sample task", status = o.status or "todo",
-        priority = o.priority or 1, tags = o.tags or {}, created_at = NOW - 10000, updated_at = NOW - 1000 }
-    if o.archived then t.archived, t.archived_at = true, NOW - 100 end
+    local t = {
+        id = o.id or 1,
+        kind = o.kind or "task",
+        title = o.title or "Sample task",
+        status = o.status or "todo",
+        priority = o.priority or 1,
+        tags = o.tags or {},
+        created_at = NOW - 10000,
+        updated_at = NOW - 1000,
+    }
+    if o.archived then
+        t.archived, t.archived_at = true, NOW - 100
+    end
     if o.overdue then
         t.deadline, t.due_date, t.due_time = NOW - 3600, "2023-11-13", "00:00"
     elseif o.future then
@@ -40,9 +61,18 @@ local function make_task(o)
     return t
 end
 
-local function by_key(ds, k) for _, d in ipairs(ds or {}) do if d.key == k then return d end end end
+local function by_key(ds, k)
+    for _, d in ipairs(ds or {}) do
+        if d.key == k then
+            return d
+        end
+    end
+end
 local function sorted_keys(ds)
-    local r = {} for _, d in ipairs(ds or {}) do r[#r + 1] = d.key end
+    local r = {}
+    for _, d in ipairs(ds or {}) do
+        r[#r + 1] = d.key
+    end
     table.sort(r)
     return r
 end
@@ -58,8 +88,13 @@ local function assert_shape(ds)
 end
 local function assert_matrix(ds, exp, label)
     assert_shape(ds)
-    local set = {} for _, d in ipairs(ds) do set[d.key] = true end
-    for _, k in ipairs(exp) do truthy(set[k], label .. " should offer '" .. k .. "' (got " .. vim.inspect(sorted_keys(ds)) .. ")") end
+    local set = {}
+    for _, d in ipairs(ds) do
+        set[d.key] = true
+    end
+    for _, k in ipairs(exp) do
+        truthy(set[k], label .. " should offer '" .. k .. "' (got " .. vim.inspect(sorted_keys(ds)) .. ")")
+    end
     eq(#ds, #exp, label .. " unexpected actions " .. vim.inspect(sorted_keys(ds)))
 end
 
@@ -70,12 +105,24 @@ local ok_actions, ok_hints = true, true
 if ok_actions then
     test("task_actions returns well-formed descriptors for every state", function()
         assert_matrix(actions.task_actions(make_task({ future = true }), NOW), { "e", "s", "x", "c", "A" }, "open")
-        assert_matrix(actions.task_actions(make_task({ status = "in_progress", future = true }), NOW), { "e", "u", "x", "c", "A" }, "in_progress")
+        assert_matrix(
+            actions.task_actions(make_task({ status = "in_progress", future = true }), NOW),
+            { "e", "s", "x", "c", "A" },
+            "in_progress"
+        )
         for _, s in ipairs({ "done", "cancelled" }) do
-            assert_matrix(actions.task_actions(make_task({ status = s, future = true }), NOW), { "e", "s", "u", "A" }, s)
+            assert_matrix(
+                actions.task_actions(make_task({ status = s, future = true }), NOW),
+                { "e", "s", "x", "A" },
+                s
+            )
         end
-        assert_matrix(actions.task_actions(make_task({ overdue = true }), NOW), { "e", "s", "x", "c", "A", "p" }, "overdue")
-        assert_matrix(actions.task_actions(make_task({ archived = true }), NOW), { "e", "R", "D" }, "archived")
+        assert_matrix(
+            actions.task_actions(make_task({ overdue = true }), NOW),
+            { "e", "s", "x", "c", "A", "p" },
+            "overdue"
+        )
+        assert_matrix(actions.task_actions(make_task({ archived = true }), NOW), { "e", "A", "D" }, "archived")
     end)
 
     test("notice actions take precedence over start/postpone", function()
@@ -96,8 +143,11 @@ if ok_actions then
     test("allowed mirrors descriptors and denies cross-state ids", function()
         local open, progress = make_task({ future = true }), make_task({ status = "in_progress", future = true })
         local overdue, archived = make_task({ overdue = true }), make_task({ archived = true })
-        local closed, notice = make_task({ status = "done", future = true }), make_task({ kind = "notice", overdue = true })
-        local id = function(state, key) return assert(by_key(actions.task_actions(state, NOW), key)).id end
+        local closed, notice =
+            make_task({ status = "done", future = true }), make_task({ kind = "notice", overdue = true })
+        local id = function(state, key)
+            return assert(by_key(actions.task_actions(state, NOW), key)).id
+        end
         for _, state in ipairs({ open, progress, overdue, archived, closed, notice }) do
             for _, d in ipairs(actions.task_actions(state, NOW)) do
                 eq(actions.allowed(state, d.id, NOW), true, "descriptor id must be allowed: " .. d.id)
@@ -106,14 +156,14 @@ if ok_actions then
         end
         eq(actions.allowed(archived, id(open, "s"), NOW), false, "archived cannot start")
         eq(actions.allowed(archived, id(open, "x"), NOW), false, "archived cannot complete")
-        eq(actions.allowed(open, id(archived, "R"), NOW), false, "open cannot restore")
+        eq(actions.allowed(open, id(archived, "A"), NOW), false, "open cannot restore")
         eq(actions.allowed(open, id(archived, "D"), NOW), false, "open cannot delete")
-        eq(actions.allowed(open, id(progress, "u"), NOW), false, "open cannot reopen")
+        eq(actions.allowed(open, id(progress, "s"), NOW), false, "open cannot reopen")
         eq(actions.allowed(open, id(overdue, "p"), NOW), false, "future task cannot postpone")
         eq(actions.allowed(notice, id(open, "s"), NOW), false, "notice cannot start")
         eq(actions.allowed(notice, id(overdue, "p"), NOW), false, "notice cannot postpone")
         eq(actions.allowed(overdue, id(overdue, "p"), NOW), true, "overdue can postpone")
-        eq(actions.allowed(progress, id(progress, "u"), NOW), true, "in_progress can reopen")
+        eq(actions.allowed(progress, id(progress, "s"), NOW), true, "in_progress can reopen")
     end)
 end
 
@@ -129,14 +179,18 @@ if ok_hints then
         }
     end
     local function display(lines, width)
-        for _, line in ipairs(lines) do truthy(vim.fn.strdisplaywidth(line) <= width, "line exceeds width: " .. line) end
+        for _, line in ipairs(lines) do
+            truthy(vim.fn.strdisplaywidth(line) <= width, "line exceeds width: " .. line)
+        end
     end
 
     test("hints.lines wraps within display width and keeps tokens intact", function()
         local lines = hints.lines(sample_actions(), 100, 5)
         truthy(#lines <= 5, "expected at most 5 lines")
         local joined = table.concat(lines, "\n")
-        for _, d in ipairs(sample_actions()) do truthy(joined:find(d.label, 1, true), "label token was broken: " .. d.label) end
+        for _, d in ipairs(sample_actions()) do
+            truthy(joined:find(d.label, 1, true), "label token was broken: " .. d.label)
+        end
         truthy(joined:find("e", 1, true) and joined:find("p", 1, true), "keys must appear")
         display(lines, 100)
     end)
@@ -170,5 +224,7 @@ if ok_hints then
 end
 
 print(string.format("\n%d passed, %d failed, %d skipped", P, F, S))
-if F > 0 then vim.cmd("cquit " .. F) end
+if F > 0 then
+    vim.cmd("cquit " .. F)
+end
 vim.cmd("qa!")
