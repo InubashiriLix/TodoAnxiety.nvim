@@ -8,3 +8,6 @@ cache/
 .agent/
 .claude/
 .codex/
+
+# Rust sync server build artifacts
+server/target/

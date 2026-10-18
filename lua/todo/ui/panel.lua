@@ -18,6 +18,7 @@ local Split = require("nui.split")
 
 local M = {}
 local ns = vim.api.nvim_create_namespace("todo_dashboard")
+local selection_ns = vim.api.nvim_create_namespace("todo_dashboard_selection")
 -- The fixed detail pane and the detail overlay are mutually exclusive (the
 -- overlay only opens when there is no fixed pane), so both can share one
 -- buffer kept alive across mount/unmount. Recreating it on every open/close
@@ -65,6 +66,11 @@ end
 local function service()
     return require("todo")._service()
 end
+local function display_planner()
+    local svc = service()
+    local snapshot = state.owner and state.owner.snapshot
+    return require("todo.planning").new(snapshot and snapshot.ws or require("todo.workspace").new(svc.store), svc)
+end
 
 local function owner_valid()
     local owner = state.owner
@@ -81,7 +87,18 @@ local function owner_has_window(owner, winid)
     if not owner or not winid or not vim.api.nvim_win_is_valid(winid) then
         return false
     end
-    for _, name in ipairs({ "split", "header", "list", "footer", "detail", "detail_overlay", "transient", "help" }) do
+    for _, name in ipairs({
+        "split",
+        "header",
+        "list",
+        "footer",
+        "detail",
+        "detail_overlay",
+        "saved_detail",
+        "max_overlay",
+        "transient",
+        "help",
+    }) do
         local component = owner[name]
         if component and component.winid == winid then
             return true
@@ -137,9 +154,7 @@ local function set_buffer(buf, lines)
     if not vim.api.nvim_buf_is_valid(buf) then
         return
     end
-    vim.bo[buf].modifiable = true
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    vim.bo[buf].modifiable = false
+    require("todo.ui.surface").write(buf, lines)
     vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 end
 
@@ -198,8 +213,24 @@ end
 local function header_content(compact, width)
     width = width or 200
     local filters = filter_summary()
+    local capacity
+    if state.view == "today" then
+        local p = display_planner():today()
+        local planned = 0
+        for _, i in ipairs(p.items) do
+            planned = planned + (i.minutes or 0)
+        end
+        capacity = string.format(
+            "%s · %dm / %dm · %dm %s",
+            p.date,
+            planned,
+            p.capacity_minutes,
+            math.floor(p.capacity_minutes * (p.reserve_ratio or 0.25)),
+            config.get().language == "zh-CN" and "预留" or "reserve"
+        )
+    end
     if compact then
-        local title = "  TODO.NVIM · " .. i18n.t(state.view)
+        local title = "  TODO.NVIM · " .. (capacity or i18n.t(state.view))
         local tab_lines, spans = tab_layout(true, width, 2, " ")
         local result = { viewmodel.truncate(title, width) }
         for _, line in ipairs(tab_lines) do
@@ -213,7 +244,7 @@ local function header_content(compact, width)
     local tab_lines, spans = tab_layout(false, width, 1, "  TODO.NVIM  ")
     local result = vim.deepcopy(tab_lines)
     result[#result + 1] = #filters > 0 and ("  " .. table.concat(filters, "   "))
-        or ("  / " .. i18n.t("search_placeholder"))
+        or (capacity and ("  " .. capacity) or ("  / " .. i18n.t("search_placeholder")))
     return result, spans, 1
 end
 
@@ -248,16 +279,20 @@ local function list_content(width)
             local group = row.tag and highlights.tag(row.tag) or "TodoHeader"
             decorations[#decorations + 1] = { line = #lines - 1, from = 1, to = #lines[#lines], group = group }
             mappings[#lines] = row
-            if index == state.cursor_row then
-                decorations[#decorations + 1] =
-                    { line = #lines - 1, from = 0, to = -1, group = "TodoSelected", whole = true }
-            end
         else
             local task = row.task
             local indent = string.rep("  ", row.depth)
             local reason, reason_group = urgency_label(task)
             local line1, line2 =
                 viewmodel.card(task, math.max(10, width - 3 - #indent), reason, { relative = relative })
+            if task.planning then
+                line2 = string.format(
+                    "%dm %s · %s",
+                    task.planning.minutes or 0,
+                    task.planning.locked and "[locked]" or "",
+                    task.planning.next_action or ""
+                )
+            end
             local first = #lines + 1
             lines[#lines + 1] = " " .. indent .. line1
             lines[#lines + 1] = " " .. indent .. line2
@@ -298,12 +333,6 @@ local function list_content(width)
                     }
                 end
             end
-            if index == state.cursor_row then
-                decorations[#decorations + 1] =
-                    { line = first - 1, from = 0, to = -1, group = "TodoSelected", whole = true }
-                decorations[#decorations + 1] =
-                    { line = first, from = 0, to = -1, group = "TodoSelected", whole = true }
-            end
         end
     end
     if #order == 0 then
@@ -317,7 +346,8 @@ end
 --- Detail panes render markdown, so treesitter owns the highlighting and we
 --- hand back an empty decoration list.
 local function detail_content(task)
-    return markdown.task_lines(task), {}
+    local snapshot = state.owner and state.owner.snapshot
+    return markdown.task_lines(task, { notes = snapshot and snapshot:list("note") }), {}
 end
 
 local function apply_decorations(buf, decorations, offset)
@@ -336,12 +366,197 @@ local function apply_decorations(buf, decorations, offset)
     end
 end
 
+local render
+
 local function L(en, zh)
     return config.get().language == "zh-CN" and zh or en
 end
 
+local function planning_membership(task, display)
+    local svc = service()
+    if not svc.store.db then
+        return nil, os.date("%Y-%m-%d")
+    end
+    local planner = display and display_planner()
+        or require("todo.planning").new(require("todo.workspace").new(svc.store), svc)
+    local date = state.view == "today" and planner:today().date or planner:date()
+    local plan = planner:today(date)
+    for _, item in ipairs(plan.items) do
+        if task and item.task_uuid == task.sync_uuid then
+            return item, date
+        end
+    end
+    return nil, date
+end
+
+local function planner_action(action, role)
+    local ok, err = pcall(function()
+        local svc = service()
+        local ws = require("todo.workspace").new(svc.store)
+        local planner = require("todo.planning").new(ws, svc)
+        local task = selected_task()
+        if role == "list" or role == "sidebar" then
+            local row = current_row()
+            task = row and row.kind == "task" and row.task or nil
+        end
+        if action == "plan" then
+            require("todo").plan(state.view == "today" and { date = planner:today().date } or nil)
+            return
+        end
+        if action == "capacity" then
+            local p = planner:today()
+            vim.ui.input(
+                { prompt = L("Available minutes: ", "可用分钟数："), default = tostring(p.capacity_minutes) },
+                function(value)
+                    local n = tonumber(value)
+                    if n and n > 0 and n <= 1440 then
+                        planner:transaction("Planning capacity", function()
+                            p.capacity_minutes = n
+                            ws:put("plan", p.date, p)
+                        end)
+                        render()
+                    end
+                end
+            )
+            return
+        end
+        if action == "date" then
+            vim.ui.input(
+                { prompt = L("Plan date YYYY-MM-DD: ", "计划日期 YYYY-MM-DD："), default = planner:today().date },
+                function(date)
+                    if date then
+                        require("todo").today(date)
+                    end
+                end
+            )
+            return
+        end
+        assert(task, L("Select a task", "请选择任务"))
+        local member, plan_date = planning_membership(task)
+        if action == "clarify" then
+            require("todo").clarify(task.id)
+        elseif action == "toggle_today" or action == "add" then
+            local item, date = planning_membership(task)
+            if item then
+                planner:change(date, task.sync_uuid, false)
+            else
+                assert(
+                    task.kind ~= "notice"
+                        and not task.archived_at
+                        and (task.status == "todo" or task.status == "in_progress"),
+                    "Only active tasks can be added"
+                )
+                planner:add(task.sync_uuid, date)
+            end
+            render()
+        elseif action == "remove" then
+            assert(member, "Task is not in the selected plan")
+            planner:change(plan_date, task.sync_uuid, false)
+            render()
+        elseif action == "lock" then
+            assert(member, "Task is not in the selected plan")
+            planner:change(plan_date, task.sync_uuid, { locked = not member.locked })
+            render()
+        elseif action == "up" or action == "down" then
+            assert(member, "Task is not in the selected plan")
+            planner:move(plan_date, task.sync_uuid, action == "up" and -1 or 1)
+            render()
+        elseif action == "item" then
+            local item = vim.deepcopy(assert(member, "Task is not in the selected plan"))
+            local fields = {
+                { key = "next_action", label = L("Next action", "下一步") },
+                { key = "completion", label = L("Done when", "完成标准") },
+                { key = "minutes", label = L("Estimated minutes", "预计分钟数") },
+                { key = "group", label = L("Execution group", "执行分组") },
+            }
+            vim.ui.select(fields, {
+                prompt = L("Planning details", "计划详情"),
+                format_item = function(f)
+                    return f.label
+                end,
+            }, function(field)
+                if not field then
+                    return
+                end
+                local function apply(value)
+                    planner:change(plan_date, task.sync_uuid, { [field.key] = value })
+                    render()
+                end
+                if field.key == "minutes" then
+                    vim.ui.input(
+                        { prompt = field.label .. ": ", default = tostring(item.minutes or 30) },
+                        function(value)
+                            local n = tonumber(value)
+                            if n and n >= 0 and n <= 1440 then
+                                apply(n)
+                            end
+                        end
+                    )
+                elseif field.key == "group" then
+                    local groups = {
+                        { key = "now", label = L("Now", "现在做") },
+                        { key = "next", label = L("Next", "接下来") },
+                        { key = "optional", label = L("If time permits", "有余力再做") },
+                    }
+                    vim.ui.select(groups, {
+                        prompt = field.label,
+                        format_item = function(g)
+                            return g.label
+                        end,
+                    }, function(g)
+                        if g then
+                            apply(g.key)
+                        end
+                    end)
+                else
+                    require("todo.ui.planner").editor(field.label, item[field.key] or "", apply)
+                end
+            end)
+        elseif action == "note" then
+            local notes = { { label = L("New note", "新建备注") } }
+            for _, r in ipairs(ws:list("note")) do
+                if r.value.task_uuid == task.sync_uuid then
+                    notes[#notes + 1] = { label = r.value.text:sub(1, 70), record = r }
+                end
+            end
+            vim.ui.select(notes, {
+                prompt = L("Task notes", "任务备注"),
+                format_item = function(n)
+                    return n.label
+                end,
+            }, function(choice)
+                if not choice then
+                    return
+                end
+                local r = choice.record
+                require("todo.ui.planner").editor(
+                    L("Task note", "任务备注"),
+                    r and r.value.text or "",
+                    function(value)
+                        planner:transaction("Task note", function()
+                            ws:put("note", r and r.key or require("todo.sync.codec").uuid(), {
+                                task_uuid = task.sync_uuid,
+                                text = value,
+                                source = "user",
+                                created_at = r and r.value.created_at or os.time(),
+                            }, r and r.revision)
+                        end)
+                        render()
+                    end,
+                    svc.store
+                )
+            end)
+        end
+    end)
+    if not ok then
+        vim.notify(tostring(err), vim.log.levels.WARN)
+    end
+end
+
 local function context_task(role)
-    if role == "detail" or role == "overlay" then return selected_task() end
+    if role == "detail" or role == "overlay" then
+        return selected_task()
+    end
     if role == "list" or role == "sidebar" then
         local row = current_row()
         return row and row.kind == "task" and row.task or nil
@@ -355,17 +570,59 @@ local function panel_context(role)
         entries[#entries + 1] = { key = key, label = L(en, zh), group = group, modes = { "n" } }
     end
     local nav, page = L("Navigation", "导航"), L("Page", "页面")
+    add("+", "Maximize / restore pane", "最大化／还原当前区域", nav)
+    add("P", "AI planning", "AI 编排", page)
+    if context_task(role) then
+        add("Q", "Clarify task with AI", "AI 澄清任务", page)
+        local task = context_task(role)
+        local item, date = planning_membership(task, true)
+        local today = service().store.db and display_planner():date() or os.date("%Y-%m-%d")
+        if
+            item
+            or (
+                not task.archived_at
+                and task.kind ~= "notice"
+                and (task.status == "todo" or task.status == "in_progress")
+            )
+        then
+            add(
+                "t",
+                item and "Remove from plan" or "Add to plan",
+                (item and "移出" or "加入") .. (date == today and "今日" or date:sub(6)),
+                page
+            )
+        end
+        add("N", "Add note", "添加备注", page)
+    end
+    if state.view == "today" then
+        local item = planning_membership(context_task(role))
+        if item then
+            add("L", item.locked and "Unlock" or "Lock", item.locked and "解锁" or "锁定", page)
+            add("J / K", "Reorder", "调整顺序", page)
+            add("m", "Planning fields", "计划字段", page)
+        end
+        add("C", "Daily capacity", "每日容量", page)
+        add("b", "Choose date", "选择日期", page)
+    end
     if role == "detail" or role == "overlay" then
         add("j/k", "Read lines", "逐行阅读", nav)
         add("gg/G", "Top / bottom", "首行／末行", nav)
         add("Ctrl-u/d", "Half page", "半页滚动", nav)
-        if role == "detail" then add("h", "Return to list", "返回列表", nav) end
+        if role == "detail" then
+            add("h", "Return to list", "返回列表", nav)
+        end
     else
         add("j/k", "Select row", "选择条目", nav)
         add("gg/G", "First / last row", "首项／末项", nav)
         add("Ctrl-u/d", "Half page", "半页跳转", nav)
-        if context_task(role) then add("Enter", "Details", "详情", nav) end
-        if state.owner and state.owner.detail and role == "list" then add("l", "Focus details", "进入详情", nav) end
+        if context_task(role) then
+            add("Enter", "Details", "详情", nav)
+        else
+            add("Enter", "Fold section", "折叠分组", nav)
+        end
+        if state.owner and state.owner.detail and role == "list" then
+            add("l", "Focus details", "进入详情", nav)
+        end
         add("Tab / za", "Fold section", "折叠当前分组", nav)
         add("zR / zM", "Expand / collapse all", "全部展开／折叠", nav)
     end
@@ -379,17 +636,26 @@ local function panel_context(role)
         add("r", "Refresh", "刷新", page)
         add("Esc", "Clear filters, else close", "清除筛选，否则关闭", page)
     end
-    add("q", role == "overlay" and "Close details" or "Close dashboard", role == "overlay" and "关闭详情" or "关闭面板", page)
-    if role == "overlay" then add("Esc", "Close details", "关闭详情", page) end
+    add(
+        "q",
+        role == "overlay" and "Close details" or "Close dashboard",
+        role == "overlay" and "关闭详情" or "关闭面板",
+        page
+    )
+    if role == "overlay" then
+        add("Esc", "Close details", "关闭详情", page)
+    end
     add("? / F1", "Complete help", "完整帮助", page)
     local title = (role == "detail" or role == "overlay") and i18n.t("details") or i18n.t(state.view)
     local task = context_task(role)
-    if task then title = title .. " · " .. i18n.t(task.status) end
+    if task then
+        title = title .. " · " .. i18n.t(task.status)
+    end
     return { title = title, actions = entries }
 end
 
 local function footer_lines(width, role)
-    return hints.lines(panel_context(role or "list").actions, width, 3)
+    return hints.compact(panel_context(role or "list").actions, width)
 end
 
 local function focus_selected(owner)
@@ -399,9 +665,18 @@ local function focus_selected(owner)
     end
     local target = current_row()
     local selected_line
+    local buf = owner.split and owner.split.bufnr or owner.list.bufnr
+    vim.api.nvim_buf_clear_namespace(buf, selection_ns, 0, -1)
     for line, row in pairs(state.task_lines) do
         if row == target then
             selected_line = not selected_line and line or math.min(selected_line, line)
+            vim.api.nvim_buf_set_extmark(buf, selection_ns, line - 1, 0, {
+                end_row = line,
+                end_col = 0,
+                hl_group = "TodoSelected",
+                hl_eol = true,
+                priority = 80,
+            })
         end
     end
     if selected_line then
@@ -412,13 +687,13 @@ local function focus_selected(owner)
     end
 end
 
-local render
-
 local function render_float(owner)
-    local header, spans, tab_line = header_content(false, vim.api.nvim_win_get_width(owner.header.winid))
+    local header_visible = owner.header.winid and vim.api.nvim_win_is_valid(owner.header.winid)
+    local header, spans, tab_line =
+        header_content(false, header_visible and vim.api.nvim_win_get_width(owner.header.winid) or vim.o.columns)
     -- Counts can gain a digit while open and push tabs onto an extra line; the
     -- header box was sized at mount, so drop anything that no longer fits.
-    local room = vim.api.nvim_win_get_height(owner.header.winid)
+    local room = header_visible and vim.api.nvim_win_get_height(owner.header.winid) or #header
     while #header > room do
         table.remove(header)
     end
@@ -448,7 +723,16 @@ local function render_float(owner)
         set_buffer(owner.detail.bufnr, details)
         apply_decorations(owner.detail.bufnr, detail_decorations)
     end
-    set_buffer(owner.footer.bufnr, footer_lines(vim.api.nvim_win_get_width(owner.footer.winid), "list"))
+    set_buffer(
+        owner.footer.bufnr,
+        footer_lines(
+            owner.footer.winid
+                    and vim.api.nvim_win_is_valid(owner.footer.winid)
+                    and vim.api.nvim_win_get_width(owner.footer.winid)
+                or vim.o.columns,
+            "list"
+        )
+    )
     hints.highlight(owner.footer.bufnr)
     focus_selected(owner)
 end
@@ -463,6 +747,7 @@ local function render_sidebar(owner)
     local list_offset = #lines
     vim.list_extend(lines, list_lines)
     local footer_start = #lines
+    owner.footer_start = footer_start
     vim.list_extend(lines, footer_lines(width, "sidebar"))
     state.task_lines, state.task_order = {}, order
     for line, row in pairs(mappings) do
@@ -529,7 +814,29 @@ render = function()
     end
 end
 
-local function repaint()
+local function repaint(selection_only)
+    if selection_only then
+        local owner = state.owner
+        if owner.split then
+            local buf, start = owner.split.bufnr, owner.footer_start
+            local lines = vim.api.nvim_buf_get_lines(buf, 0, start, false)
+            vim.list_extend(lines, footer_lines(vim.api.nvim_win_get_width(owner.split.winid), "sidebar"))
+            if require("todo.ui.surface").write(buf, lines) then
+                hints.highlight(buf, start, #lines)
+            end
+        else
+            if owner.detail then
+                local lines = detail_content(selected_task())
+                require("todo.ui.surface").write(owner.detail.bufnr, lines)
+            end
+            local lines = footer_lines(vim.api.nvim_win_get_width(owner.footer.winid), "list")
+            if require("todo.ui.surface").write(owner.footer.bufnr, lines) then
+                hints.highlight(owner.footer.bufnr)
+            end
+        end
+        focus_selected(owner)
+        return
+    end
     if state.owner.split then
         render_sidebar(state.owner)
     else
@@ -541,12 +848,14 @@ local function select_row(index)
     if #state.rows == 0 then
         return
     end
+    local started = require("todo.performance").start()
     state.cursor_row = math.max(1, math.min(#state.rows, index))
     local row = current_row()
     if row and row.kind == "task" then
         state.selected_id = row.task.id
     end
-    repaint()
+    repaint(true)
+    require("todo.performance").finish("panel.navigate", started)
 end
 
 local function select_delta(delta)
@@ -644,9 +953,19 @@ local function open_task_form(task, save_task)
         selected_id = state.selected_id,
     }
     M.close()
+    local persisted
     form.open(task, function(input)
-        local result, errors = save_task(input)
+        local result, errors
+        if persisted then
+            result, errors = service():update(persisted.id, input, persisted.sync_revision)
+            if result then
+                require("todo")._reschedule_reminders()
+            end
+        else
+            result, errors = save_task(input)
+        end
         if result then
+            persisted = result
             reopen.selected_id = result.id
         end
         return result, errors
@@ -661,12 +980,20 @@ end
 
 local function add_task(opts)
     opts = opts or {}
+    local add_to_today = state.view == "today"
     local last_interval = service():last_reminder_interval()
     open_task_form({
         title = opts.title or "",
         reminder = last_interval and { repeat_interval_seconds = last_interval } or nil,
     }, function(input)
-        local result, errors = service():create(input)
+        local result, errors
+        if add_to_today then
+            local svc = service()
+            local planner = require("todo.planning").new(require("todo.workspace").new(svc.store), svc)
+            result = planner:create(input)
+        else
+            result, errors = service():create(input)
+        end
         if result then
             require("todo")._reschedule_reminders()
         end
@@ -815,11 +1142,14 @@ local function menu(owner, title, items, on_submit)
     owner.transient = component
     component:mount()
     hints.attach(component.bufnr, function()
-        return { title = title, actions = {
-            { key = "j/k / Up/Down / Tab/Shift-Tab", label = L("Choose item", "选择条目") },
-            { key = "Enter", label = L("Confirm", "确认") },
-            { key = "q / Esc / Ctrl-c", label = L("Cancel", "取消") },
-        } }
+        return {
+            title = title,
+            actions = {
+                { key = "j/k / Up/Down / Tab/Shift-Tab", label = L("Choose item", "选择条目") },
+                { key = "Enter", label = L("Confirm", "确认") },
+                { key = "q / Esc / Ctrl-c", label = L("Cancel", "取消") },
+            },
+        }
     end, { owner = owner })
     local dismiss = function()
         close_transient(owner)
@@ -897,7 +1227,9 @@ end
 
 --- Put the cursor back on the list/sidebar window after a transient closes.
 local function focus_list(owner)
-    local win = owner.split and owner.split.winid or (owner.list and owner.list.winid)
+    local win = owner.max_overlay and owner.max_overlay.winid
+        or owner.split and owner.split.winid
+        or (owner.list and owner.list.winid)
     if win and vim.api.nvim_win_is_valid(win) then
         pcall(vim.api.nvim_set_current_win, win)
     end
@@ -1146,7 +1478,9 @@ local function postpone(source)
                         return
                     end
                     local target_win = vim.api.nvim_get_current_win()
-                    if owner.help and owner.help.winid == target_win then return end
+                    if owner.help and owner.help.winid == target_win then
+                        return
+                    end
                     close_transient(owner)
                     if owner.mode == "float" and not owner_has_window(owner, target_win) then
                         M.close()
@@ -1225,7 +1559,9 @@ local function open_search()
                     return
                 end
                 local target_win = vim.api.nvim_get_current_win()
-                if owner.help and owner.help.winid == target_win then return end
+                if owner.help and owner.help.winid == target_win then
+                    return
+                end
                 close_transient(owner)
                 if owner.mode == "float" and not owner_has_window(owner, target_win) then
                     M.close()
@@ -1242,23 +1578,61 @@ local function show_help()
     local win = vim.api.nvim_get_current_win()
     local role = owner.detail and owner.detail.winid == win and "detail"
         or owner.detail_overlay and owner.detail_overlay.winid == win and "overlay"
-        or owner.split and "sidebar" or "list"
-    hints.show(function() return panel_context(role) end, { owner = owner })
+        or owner.split and "sidebar"
+        or "list"
+    hints.show(function()
+        return panel_context(role)
+    end, { owner = owner })
 end
 
 local function dispatch_task(role, id, callback)
     return function()
         local task = context_task(role)
         if not actions.allowed(task, id) then
-            vim.notify(L("This operation is unavailable for the current item", "当前条目不适用此操作"), vim.log.levels.WARN)
+            vim.notify(
+                L("This operation is unavailable for the current item", "当前条目不适用此操作"),
+                vim.log.levels.WARN
+            )
             return
         end
         callback()
         local owner = state.owner
-        if owner and owner.detail_overlay and owner.detail_overlay.winid
-            and vim.api.nvim_win_is_valid(owner.detail_overlay.winid) then
+        if
+            owner
+            and owner.detail_overlay
+            and owner.detail_overlay.winid
+            and vim.api.nvim_win_is_valid(owner.detail_overlay.winid)
+        then
             refresh_overlay(owner)
         end
+    end
+end
+
+local function contextual_keys(buf, role)
+    local callbacks = {
+        start = function()
+            change_status("in_progress")
+        end,
+        reopen = function()
+            change_status("todo")
+        end,
+        done = function()
+            change_status("done")
+        end,
+        archive = function()
+            archive_task(false)
+        end,
+        restore = function()
+            archive_task(true)
+        end,
+    }
+    for _, key in ipairs({ "s", "x", "A" }) do
+        vim.keymap.set("n", key, function()
+            local action = actions.for_key(context_task(role), key)
+            if action then
+                dispatch_task(role, action.id, callbacks[action.id])()
+            end
+        end, { buffer = buf, silent = true })
     end
 end
 
@@ -1283,12 +1657,77 @@ local function set_detail_navigation(buf)
     end
 end
 
+local function guard_navigation(buf)
+    for _, key in ipairs({
+        "<C-h>",
+        "<C-j>",
+        "<C-k>",
+        "<C-l>",
+        "<LeftMouse>",
+        "<LeftDrag>",
+        "<LeftRelease>",
+        "<2-LeftMouse>",
+        "<3-LeftMouse>",
+        "<4-LeftMouse>",
+        "<RightMouse>",
+        "<RightDrag>",
+        "<RightRelease>",
+        "<MiddleMouse>",
+        "<MiddleDrag>",
+        "<MiddleRelease>",
+    }) do
+        vim.keymap.set({ "n", "x" }, key, "<Nop>", { buffer = buf, silent = true, nowait = true })
+    end
+end
+
+local function toggle_maximize(component)
+    local owner = state.owner
+    if not owner or owner.closed then
+        return
+    end
+    if owner.split then
+        if owner.max_overlay then
+            owner.max_overlay:unmount()
+            owner.max_overlay = nil
+            focus_list(owner)
+        else
+            owner.max_overlay = Popup({
+                bufnr = component.bufnr,
+                relative = "editor",
+                position = "50%",
+                size = require("todo.ui.responsive").size(vim.o.columns, vim.o.lines),
+                enter = true,
+                border = { style = "rounded", text = { top = " TODO · + " .. L("Restore", "还原") .. " " } },
+                win_options = { wrap = false, winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
+                zindex = 65,
+            })
+            owner.max_overlay:mount()
+        end
+    else
+        if owner.maximized then
+            owner.maximized = nil
+        else
+            owner.maximized = component
+        end
+        owner.reflow()
+        if component.winid and vim.api.nvim_win_is_valid(component.winid) then
+            vim.api.nvim_set_current_win(component.winid)
+        end
+    end
+end
+
 local function open_details()
     local task = require_task()
     if not task then
         return
     end
     local owner = state.owner
+    if owner.maximized and owner.saved_detail then
+        owner.maximized = owner.saved_detail
+        owner.reflow()
+        vim.api.nvim_set_current_win(owner.saved_detail.winid)
+        return
+    end
     if owner.detail then
         vim.api.nvim_set_current_win(owner.detail.winid)
         return
@@ -1296,8 +1735,8 @@ local function open_details()
     if owner.detail_overlay then
         owner.detail_overlay:unmount()
     end
-    local width = math.max(10, math.min(72, vim.o.columns - 6))
-    local height = math.max(4, math.min(24, vim.o.lines - 6))
+    local width = math.max(1, math.min(72, vim.o.columns - 6))
+    local height = math.max(1, math.min(24, vim.o.lines - 6))
     local position = "50%"
     if owner.split and owner.split.winid and vim.api.nvim_win_is_valid(owner.split.winid) then
         local pos = vim.api.nvim_win_get_position(owner.split.winid)
@@ -1326,6 +1765,7 @@ local function open_details()
     })
     owner.detail_overlay = overlay
     overlay:mount()
+    require("todo.ui.responsive").popup(overlay, 72, 24)
     markdown.attach(overlay.bufnr)
     render_overlay(overlay)
     local close = function()
@@ -1336,13 +1776,41 @@ local function open_details()
     vim.keymap.set("n", "q", close, { buffer = overlay.bufnr })
     vim.keymap.set("n", "<Esc>", close, { buffer = overlay.bufnr })
     local callbacks = {
-        edit = edit_task, start = function() change_status("in_progress") end,
-        done = function() change_status("done") end, cancel = function() change_status("cancelled") end,
-        reopen = function() change_status("todo") end,
-        archive = function() archive_task(false) end, restore = function() archive_task(true) end,
-        delete = delete_archived_task, postpone = function() postpone("detail") end,
+        edit = edit_task,
+        start = function()
+            change_status("in_progress")
+        end,
+        done = function()
+            change_status("done")
+        end,
+        cancel = function()
+            change_status("cancelled")
+        end,
+        reopen = function()
+            change_status("todo")
+        end,
+        archive = function()
+            archive_task(false)
+        end,
+        restore = function()
+            archive_task(true)
+        end,
+        delete = delete_archived_task,
+        postpone = function()
+            postpone("detail")
+        end,
     }
-    local keys = { edit = "e", start = "s", done = "x", cancel = "c", reopen = "u", archive = "A", restore = "R", delete = "D", postpone = "p" }
+    local keys = {
+        edit = "e",
+        start = "s",
+        done = "x",
+        cancel = "c",
+        reopen = "u",
+        archive = "A",
+        restore = "R",
+        delete = "D",
+        postpone = "p",
+    }
     for id, callback in pairs(callbacks) do
         vim.keymap.set("n", keys[id], dispatch_task("overlay", id, callback), { buffer = overlay.bufnr, silent = true })
     end
@@ -1353,14 +1821,42 @@ local function open_details()
     end
     vim.keymap.set("n", "h", "h", { buffer = overlay.bufnr, silent = true })
     require("todo.ui.history").attach(overlay.bufnr)
-    hints.attach(overlay.bufnr, function() return panel_context("overlay") end, { owner = owner })
+    hints.attach(overlay.bufnr, function()
+        return panel_context("overlay")
+    end, { owner = owner })
+    for key, action in pairs({ P = "plan", Q = "clarify", t = "toggle_today", N = "note" }) do
+        vim.keymap.set("n", key, function()
+            planner_action(action)
+        end, { buffer = overlay.bufnr, silent = true })
+    end
+    contextual_keys(overlay.bufnr, "overlay")
     set_detail_navigation(overlay.bufnr)
+    guard_navigation(overlay.bufnr)
+    vim.keymap.set("n", "+", function()
+        require("todo.ui.responsive").toggle_maximize(overlay, 72, 24)
+    end, { buffer = overlay.bufnr, silent = true, nowait = true })
 end
 
 local function set_mappings(component, role)
     local buf = component.bufnr
+    guard_navigation(buf)
+    vim.keymap.set("n", "+", function()
+        toggle_maximize(component)
+    end, { buffer = buf, nowait = true, silent = true })
     local opts = function(desc)
         return { buffer = buf, silent = true, desc = desc }
+    end
+    for key, action in pairs({ P = "plan", Q = "clarify", t = "toggle_today", N = "note" }) do
+        vim.keymap.set("n", key, function()
+            planner_action(action, role)
+        end, opts("Planning: " .. action))
+    end
+    for key, action in pairs({ T = "remove", L = "lock", J = "down", K = "up", m = "item", C = "capacity", b = "date" }) do
+        vim.keymap.set("n", key, function()
+            if state.view == "today" then
+                planner_action(action, role)
+            end
+        end, opts("Today: " .. action))
     end
     vim.keymap.set("n", "q", M.close, opts("Close todo dashboard"))
     -- Esc peels one layer: active filters first, then the panel itself.
@@ -1453,41 +1949,102 @@ local function set_mappings(component, role)
         end
         menu(state.owner, i18n.t("view"), items, change_view)
     end, opts("Choose view"))
-    vim.keymap.set("n", "<CR>", open_details, opts("Open details"))
+    vim.keymap.set("n", "<CR>", function()
+        if current_row() and current_row().kind == "section" then
+            toggle_fold()
+        else
+            open_details()
+        end
+    end, opts("Open details"))
     local callbacks = {
-        e = { "edit", edit_task }, s = { "start", function() change_status("in_progress") end },
-        x = { "done", function() change_status("done") end }, c = { "cancel", function() change_status("cancelled") end },
-        u = { "reopen", function() change_status("todo") end }, A = { "archive", function() archive_task(false) end },
-        R = { "restore", function() archive_task(true) end }, D = { "delete", delete_archived_task },
-        p = { "postpone", function() postpone(role == "detail" and "detail" or "list") end },
+        e = { "edit", edit_task },
+        s = {
+            "start",
+            function()
+                change_status("in_progress")
+            end,
+        },
+        x = {
+            "done",
+            function()
+                change_status("done")
+            end,
+        },
+        c = {
+            "cancel",
+            function()
+                change_status("cancelled")
+            end,
+        },
+        u = {
+            "reopen",
+            function()
+                change_status("todo")
+            end,
+        },
+        A = {
+            "archive",
+            function()
+                archive_task(false)
+            end,
+        },
+        R = {
+            "restore",
+            function()
+                archive_task(true)
+            end,
+        },
+        D = { "delete", delete_archived_task },
+        p = {
+            "postpone",
+            function()
+                postpone(role == "detail" and "detail" or "list")
+            end,
+        },
     }
     for key, value in pairs(callbacks) do
         if key ~= "p" or role == "list" or role == "sidebar" or role == "detail" then
             vim.keymap.set("n", key, dispatch_task(role, value[1], value[2]), opts(value[1]))
         end
     end
+    contextual_keys(buf, role)
     if role == "detail" then
         for _, key in ipairs({ "<Tab>", "za", "zM", "zR" }) do
             pcall(vim.keymap.del, "n", key, { buffer = buf })
         end
     end
     require("todo.ui.history").attach(buf)
-    hints.attach(buf, function() return panel_context(role) end, {
+    hints.attach(buf, function()
+        return panel_context(role)
+    end, {
         owner = state.owner,
         on_update = function(ctx)
             local owner = state.owner
             if owner and owner.footer and owner.footer.winid and vim.api.nvim_win_is_valid(owner.footer.winid) then
-                set_buffer(owner.footer.bufnr, hints.lines(ctx.actions, vim.api.nvim_win_get_width(owner.footer.winid), 3))
+                set_buffer(
+                    owner.footer.bufnr,
+                    hints.compact(ctx.actions, vim.api.nvim_win_get_width(owner.footer.winid))
+                )
                 hints.highlight(owner.footer.bufnr)
             end
         end,
     })
-    if role == "list" and state.owner and state.owner.detail then
+    if role == "list" and state.owner then
         vim.keymap.set("n", "l", function()
-            vim.api.nvim_set_current_win(state.owner.detail.winid)
+            if state.owner.maximized then
+                open_details()
+            elseif state.owner.detail then
+                vim.api.nvim_set_current_win(state.owner.detail.winid)
+            else
+                open_details()
+            end
         end, opts("Focus details"))
     elseif role == "detail" then
         vim.keymap.set("n", "h", function()
+            if state.owner.maximized then
+                state.owner.maximized = state.owner.list
+                state.owner.reflow()
+            end
             vim.api.nvim_set_current_win(state.owner.list.winid)
         end, opts("Focus list"))
     end
@@ -1525,42 +2082,70 @@ end
 
 local function create_float(owner)
     local cfg = config.get().ui.float
-    local width = math.max(10, math.min(vim.o.columns - 4, math.floor(vim.o.columns * cfg.width)))
-    local height = math.max(6, math.min(vim.o.lines - 4, math.floor((vim.o.lines - 2) * cfg.height)))
-    owner.wide = width >= 100
-    -- Tabs wrap when they cannot fit, so the header box grows with them.
-    local header_lines = select(1, header_content(false, width))
+    local responsive = require("todo.ui.responsive")
     owner.header = base_popup(nil, { border = false })
     owner.list = base_popup(i18n.t(state.view), { enter = true })
     owner.footer = base_popup(nil, { border = false })
-    local body
-    if owner.wide then
-        owner.detail = base_popup(
-            i18n.t("details"),
-            { enter = false, wrap = true, markdown = true, bufnr = persistent_detail_bufnr() }
-        )
-        body = Layout.Box({
-            Layout.Box(owner.list, { size = "58%" }),
-            Layout.Box(owner.detail, { size = "42%" }),
-        }, { dir = "row", grow = 1 })
-    else
-        body = Layout.Box(owner.list, { grow = 1 })
-    end
-    owner.layout = Layout(
-        { relative = "editor", position = "50%", size = { width = width, height = height } },
-        Layout.Box({
-            Layout.Box(owner.header, { size = math.max(2, #header_lines) }),
-            body,
-            Layout.Box(owner.footer, { size = math.min(3, math.max(1, height - #header_lines - 4)) }),
-        }, { dir = "col" })
+    owner.saved_detail = base_popup(
+        i18n.t("details"),
+        { enter = false, wrap = true, markdown = true, bufnr = persistent_detail_bufnr() }
     )
+    local function geometry()
+        local size = responsive.size(math.floor(vim.o.columns * cfg.width), math.floor((vim.o.lines - 2) * cfg.height))
+        owner.wide = size.width >= 100
+        owner.detail = owner.wide and owner.saved_detail or nil
+        local body = owner.detail
+                and Layout.Box(
+                    { Layout.Box(owner.list, { size = "58%" }), Layout.Box(owner.detail, { size = "42%" }) },
+                    { dir = "row", grow = 1 }
+                )
+            or Layout.Box(owner.list, { grow = 1 })
+        local boxes = { body }
+        if size.height >= 10 then
+            local header = select(1, header_content(false, size.width))
+            table.insert(boxes, 1, Layout.Box(owner.header, { size = math.min(4, math.max(2, #header)) }))
+            boxes[#boxes + 1] = Layout.Box(owner.footer, { size = 2 })
+        end
+        return { relative = "editor", position = "50%", size = size }, Layout.Box(boxes, { dir = "col" })
+    end
+    local placement, box = geometry()
+    owner.layout = Layout(placement, box)
     owner.layout:mount()
+    owner.reflow = function()
+        local focused = owner_has_window(owner, vim.api.nvim_get_current_win())
+        local views = {}
+        for _, pop in ipairs({ owner.list, owner.saved_detail }) do
+            if pop.winid and vim.api.nvim_win_is_valid(pop.winid) then
+                views[pop.bufnr] = vim.api.nvim_win_call(pop.winid, vim.fn.winsaveview)
+            end
+        end
+        local next_placement, next_box = geometry()
+        owner.layout:update(next_placement, next_box)
+        if owner.maximized then
+            owner.maximized:show()
+            owner.maximized:update_layout({
+                relative = "editor",
+                position = "50%",
+                size = responsive.size(vim.o.columns, vim.o.lines),
+                zindex = 65,
+            })
+            if focused then
+                vim.api.nvim_set_current_win(owner.maximized.winid)
+            end
+        end
+        render()
+        for _, pop in ipairs({ owner.list, owner.saved_detail }) do
+            if pop.winid and vim.api.nvim_win_is_valid(pop.winid) and views[pop.bufnr] then
+                vim.api.nvim_win_call(pop.winid, function()
+                    vim.fn.winrestview(views[pop.bufnr])
+                end)
+            end
+        end
+    end
     set_mappings(owner.header, "header")
     set_mappings(owner.list, "list")
     set_mappings(owner.footer, "footer")
-    if owner.detail then
-        set_mappings(owner.detail, "detail")
-    end
+    set_mappings(owner.saved_detail, "detail")
     vim.api.nvim_set_current_win(owner.list.winid)
 end
 
@@ -1576,6 +2161,16 @@ local function create_sidebar(owner)
     })
     owner.split:mount()
     set_mappings(owner.split, "sidebar")
+    owner.reflow = function()
+        if owner.max_overlay then
+            owner.max_overlay:update_layout({
+                relative = "editor",
+                position = "50%",
+                size = require("todo.ui.responsive").size(vim.o.columns, vim.o.lines),
+            })
+        end
+        render()
+    end
 end
 
 function M.open(opts)
@@ -1594,6 +2189,9 @@ function M.open(opts)
     end)
     state.stats = ok and stats or state.stats
     local owner = { closed = false, transient = nil, mode = state.mode }
+    if service().store.workspace then
+        owner.snapshot = require("todo.ui.snapshot").new(service())
+    end
     state.owner = owner
     if state.mode == "sidebar" then
         create_sidebar(owner)
@@ -1601,23 +2199,13 @@ function M.open(opts)
         create_float(owner)
     end
     render()
+    owner.close = M.close
     owner.resize_group = vim.api.nvim_create_augroup("TodoDashboardResize", { clear = true })
-    vim.api.nvim_create_autocmd("VimResized", {
-        group = owner.resize_group,
-        callback = function()
-            if owner_valid() then
-                local reopen = {
-                    mode = state.mode,
-                    view = state.view,
-                    filters = vim.deepcopy(state.filters),
-                    selected_id = state.selected_id,
-                }
-                vim.schedule(function()
-                    M.open(reopen)
-                end)
-            end
-        end,
-    })
+    require("todo.ui.responsive").watch(owner, function()
+        if state.owner == owner and owner.reflow then
+            owner.reflow()
+        end
+    end)
     vim.api.nvim_create_autocmd("WinEnter", {
         group = owner.resize_group,
         callback = function()
@@ -1642,12 +2230,27 @@ function M.close()
         return
     end
     owner.closed = true
+    if owner.reflow_group then
+        pcall(vim.api.nvim_del_augroup_by_id, owner.reflow_group)
+    end
     hints.close(owner)
     close_transient(owner)
+    if owner.max_overlay then
+        owner.max_overlay:unmount()
+    end
     if owner.detail_overlay then
         pcall(function()
             owner.detail_overlay:unmount()
         end)
+    end
+    if owner.saved_detail then
+        pcall(owner.saved_detail.unmount, owner.saved_detail)
+    end
+    if owner.header then
+        pcall(owner.header.unmount, owner.header)
+    end
+    if owner.footer then
+        pcall(owner.footer.unmount, owner.footer)
     end
     if owner.layout then
         pcall(function()
@@ -1675,6 +2278,9 @@ end
 
 function M.refresh()
     if owner_valid() then
+        if state.owner.snapshot then
+            state.owner.snapshot:invalidate()
+        end
         render()
         refresh_overlay(state.owner)
     end

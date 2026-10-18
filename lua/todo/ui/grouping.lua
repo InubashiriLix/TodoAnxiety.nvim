@@ -3,7 +3,7 @@ local urgency = require("todo.urgency")
 
 local M = {}
 
-M.views = { "active", "emergency", "by_urgency", "by_time", "by_tag", "notices", "archived" }
+M.views = { "active", "today", "emergency", "by_urgency", "by_time", "by_tag", "notices", "archived" }
 
 -- Views that regroup the active task set instead of defining their own scope.
 M.regrouped = { by_urgency = true, by_time = true, by_tag = true }
@@ -172,7 +172,30 @@ end
 
 --- Build the section list for a view. Tasks arrive pre-sorted by service:list.
 function M.sections(tasks, view, now)
-    if view == "active" then
+    if view == "today" then
+        local result = {}
+        for _, g in ipairs({
+            { "now", "Now", "现在做" },
+            { "next", "Next", "接下来" },
+            { "optional", "If time permits", "有余力再做" },
+            { "review", "Review previous days", "往日待复核" },
+        }) do
+            local bucket = {}
+            for _, t in ipairs(tasks) do
+                if (t.planning or {}).group == g[1] then
+                    bucket[#bucket + 1] = t
+                end
+            end
+            if #bucket > 0 then
+                result[#result + 1] = {
+                    key = g[1],
+                    label = require("todo.config").get().language == "zh-CN" and g[3] or g[2],
+                    tasks = bucket,
+                }
+            end
+        end
+        return result
+    elseif view == "active" then
         return bucket_status(tasks)
     elseif view == "by_urgency" then
         return bucket_urgency(tasks, now)

@@ -1,0 +1,41 @@
+name: Rust sync server
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path server/Cargo.toml --locked
+  static:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            zig_target: x86_64-linux-musl
+          - target: aarch64-unknown-linux-musl
+            zig_target: aarch64-linux-musl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: mlugg/setup-zig@v2
+      - run: cargo install cargo-zigbuild --locked
+      - run: cargo zigbuild --manifest-path server/Cargo.toml --release --locked --target ${{ matrix.target }}
+      - name: Verify static artifact
+        shell: bash
+        run: |
+          binary=server/target/${{ matrix.target }}/release/todoanxiety-sync
+          file "$binary"
+          if readelf -l "$binary" | grep -q INTERP; then exit 1; fi
+          if readelf -d "$binary" | grep -q NEEDED; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: todoanxiety-sync-${{ matrix.target }}
+          path: server/target/${{ matrix.target }}/release/todoanxiety-sync

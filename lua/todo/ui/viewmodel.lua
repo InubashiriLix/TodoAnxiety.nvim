@@ -74,9 +74,8 @@ function M.card(task, width, reason, opts)
 
     local due_text
     if opts.relative then
-        local label = require("todo.ui.grouping").relative(
-            (task.urgency or require("todo.urgency").calculate(task)).due_epoch
-        )
+        local label =
+            require("todo.ui.grouping").relative((task.urgency or require("todo.urgency").calculate(task)).due_epoch)
         due_text = label or "—"
     elseif task.due_date then
         due_text = task.due_date .. (task.due_time and (" " .. task.due_time) or "")

@@ -3,15 +3,82 @@ local M = {}
 local defaults = {
     db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
     language = "en",
+    ai = {
+        enabled = false,
+        provider = "deepseek",
+        capabilities = {},
+        max_tokens_field = "max_tokens",
+        base_url = "https://api.deepseek.com",
+        model = "deepseek-flash",
+        api_key_env = "DEEPSEEK_API_KEY",
+        api_key = false, -- String or function returning a key; takes precedence.
+        api_key_file = "", -- Raw key file, not the JSON UI credential store.
+        preferences_source = "workspace", -- "config" makes Lua language/persona authoritative.
+        text_only = false,
+        extended = false,
+        mode = "plan",
+        permissions = {
+            roots = {}, -- Explicit consent to read these directories and send excerpts to AI.
+            domains = {}, -- Exact HTTPS hosts; redirects and private addresses are rejected.
+            rules = { read_file = "allow", search_files = "allow", fetch_url = "ask", run_command = "ask" },
+            auto_apply_documents = true,
+            max_calls_per_item = 6,
+            max_output_bytes = 12000,
+            timeout_ms = 15000,
+            snapshot_max_files = 500,
+            snapshot_max_bytes = 2097152,
+            max_processes = 64,
+            memory_mb = 256,
+            cpu_seconds = 5,
+            scratch_mb = 16,
+        },
+        language = "auto",
+        persona = "A practical, patient planning assistant. Ask only necessary questions, then propose an executable plan.",
+        planning = {
+            max_rounds_per_item = 10,
+            questions_per_round = 3,
+            max_requests_per_item = 16,
+            max_requests_total = false,
+            stream = true,
+            image_paste_key = "<localleader>p",
+        },
+        max_questions = 10, -- Legacy alias for max_rounds.
+        max_rounds = 10,
+        max_questions_per_round = 8,
+        context_tokens = 16000,
+        memory = { enabled = true, search_limit = 8, context_tokens = 2000, recent_turns = 4 },
+        max_requests = 20,
+        max_output_tokens = 4096,
+        max_input_bytes = 524288,
+        timeout_ms = 90000,
+        session_budget_usd = false,
+        daily_budget_usd = false,
+        pricing = { version = "2026-10-15", cache_hit = 0.006, cache_miss = 0.30, output = 1.20 },
+    },
+    planning = { capacity_minutes = 480, reserve_minutes = 60, reserve_ratio = 0.125, timezone_offset_minutes = false },
+    attachments = { directory = "", max_bytes = 10485760, clipboard_command = false, viewer = false, inline = true },
     -- Configure in require("todo").setup({ sync = { ... } }) on each device.
     -- Use a dedicated private, empty Git repository and existing Git credentials.
     -- Run :Todo sync manually; :Todo sync status only checks local state.
     sync = {
+        provider = "git",
+        url = "",
+        token_env = "TODO_SYNC_TOKEN",
+        token = false, -- String or function returning a token.
+        token_file = "",
+        allow_http = false,
+        tls_verify = true,
+        ca_file = "",
+        auto = false, -- Explicit opt-in: upload local edits quietly.
+        interval_seconds = 0, -- Optional remote polling; zero disables it.
+        debounce_ms = 2000,
         enabled = false, -- Set true after filling in remote on every device.
         remote = "", -- e.g. "git@github.com:YOUR_NAME/private-todos.git"
         branch = "main", -- Use the same remote and branch on all devices.
     },
     ui = {
+        performance = false, -- Bounded, local timings in :Todo diagnostics.
+        daily_keys = {}, -- Action-name overrides; false disables a local mapping.
         default_mode = "float",
         default_view = "active",
         markdown = true,
@@ -46,12 +113,111 @@ local current = vim.deepcopy(defaults)
 
 local function validate(opts)
     assert(type(opts.sync) == "table" and type(opts.sync.enabled) == "boolean", "sync.enabled must be a boolean")
+    local function credential(value, file, env, label)
+        assert(
+            value == false or type(value) == "string" or type(value) == "function",
+            label .. " must be false, a string or function"
+        )
+        assert(
+            type(file) == "string" and type(env) == "string" and env ~= "",
+            "invalid credential file/environment configuration"
+        )
+        if type(value) == "string" then
+            assert(#value > 0 and #value <= 8192 and not value:find("[%c]"), "invalid configured credential")
+        end
+    end
+    credential(opts.ai.api_key, opts.ai.api_key_file, opts.ai.api_key_env, "ai.api_key")
+    credential(opts.sync.token, opts.sync.token_file, opts.sync.token_env, "sync.token")
+    assert(
+        opts.ai.preferences_source == "workspace" or opts.ai.preferences_source == "config",
+        "invalid ai.preferences_source"
+    )
+    assert(type(opts.ai.text_only) == "boolean" and type(opts.ai.extended) == "boolean", "invalid AI session defaults")
+    local planning = opts.planning
+    assert(
+        type(planning.capacity_minutes) == "number"
+            and planning.capacity_minutes > 0
+            and planning.capacity_minutes <= 1440
+            and planning.capacity_minutes % 1 == 0,
+        "invalid planning.capacity_minutes"
+    )
+    assert(
+        type(planning.reserve_ratio) == "number" and planning.reserve_ratio >= 0 and planning.reserve_ratio < 1,
+        "invalid planning.reserve_ratio"
+    )
+    assert(
+        planning.timezone_offset_minutes == false
+            or (
+                type(planning.timezone_offset_minutes) == "number"
+                and planning.timezone_offset_minutes % 1 == 0
+                and math.abs(planning.timezone_offset_minutes) <= 840
+            ),
+        "invalid planning.timezone_offset_minutes"
+    )
     local remote, branch = opts.sync.remote, opts.sync.branch
     assert(
         type(remote) == "string" and not remote:find("[%z\r\n]") and not remote:match("^%-"),
         "sync.remote must be a Git URL or path"
     )
-    assert(not opts.sync.enabled or remote ~= "", "sync.remote is required when sync is enabled")
+    assert(opts.sync.provider == "git" or opts.sync.provider == "server", "invalid sync.provider")
+    assert(
+        not opts.sync.enabled or opts.sync.provider ~= "git" or remote ~= "",
+        "sync.remote is required when Git sync is enabled"
+    )
+    assert(
+        not opts.sync.enabled or opts.sync.provider ~= "server" or opts.sync.url:match("^https?://"),
+        "sync.url is required for server sync"
+    )
+    assert(
+        type(opts.sync.allow_http) == "boolean" and type(opts.sync.tls_verify) == "boolean",
+        "invalid sync TLS settings"
+    )
+    assert(
+        opts.ai.max_questions >= 0
+            and opts.ai.max_questions % 1 == 0
+            and opts.ai.max_requests > 0
+            and opts.ai.max_requests % 1 == 0,
+        "invalid AI request limits"
+    )
+    assert(type(opts.ai.persona) == "string" and type(opts.ai.language) == "string", "invalid AI profile")
+    assert(opts.ai.provider == "deepseek" or opts.ai.provider == "openai_compatible", "unsupported AI provider")
+    assert(
+        type(opts.ai.base_url) == "string"
+            and opts.ai.base_url:match("^https://")
+            and not opts.ai.base_url:find("[%c?#]"),
+        "AI base_url must be HTTPS without query or fragment"
+    )
+    assert(
+        opts.ai.provider ~= "deepseek" or opts.ai.base_url:gsub("/+$", "") == "https://api.deepseek.com",
+        "Custom AI endpoints must use openai_compatible to isolate credentials"
+    )
+    assert(type(opts.ai.model) == "string" and opts.ai.model ~= "", "AI model required")
+    assert(
+        opts.ai.max_tokens_field == "max_tokens" or opts.ai.max_tokens_field == "max_completion_tokens",
+        "unsupported token limit field"
+    )
+    for name, value in pairs(opts.ai.capabilities) do
+        assert(
+            ({ vision = true, balance = true, json_mode = true, thinking_control = true })[name]
+                and type(value) == "boolean",
+            "invalid AI capability"
+        )
+    end
+    if opts.ai.pricing then
+        for _, name in ipairs({ "cache_hit", "cache_miss", "output" }) do
+            local rate = opts.ai.pricing[name]
+            assert(type(rate) == "number" and rate >= 0 and rate < math.huge, "invalid AI price")
+        end
+    else
+        assert(
+            not opts.ai.session_budget_usd and not opts.ai.daily_budget_usd,
+            "AI cost budgets require explicit pricing"
+        )
+    end
+    assert(
+        opts.attachments.max_bytes > 0 and opts.attachments.max_bytes <= 10485760,
+        "attachment limit must be <=10MiB"
+    )
     assert(
         type(branch) == "string"
             and branch:match("^[%w][%w/_.%-]*$")
@@ -87,6 +253,8 @@ local function validate(opts)
             "'active', 'emergency', 'by_urgency', 'by_time', 'by_tag', 'notices', or 'archived'",
         },
         ui_markdown = { opts.ui.markdown, "boolean" },
+        ui_performance = { opts.ui.performance, "boolean" },
+        ui_daily_keys = { opts.ui.daily_keys, "table" },
         keymaps = { opts.keymaps, "table" },
         icons = { opts.icons, "table" },
         reminders = { opts.reminders, "table" },
@@ -126,6 +294,7 @@ local function validate(opts)
         reminders_enabled = { opts.reminders.enabled, "boolean" },
         reminder_sound_path = { opts.reminders.sound.path, "string" },
     })
+    require("todo.ui.daily_keys").validate(opts.ui.daily_keys)
     local command = opts.reminders.sound.command
     if command ~= false then
         if type(command) ~= "table" or #command == 0 then
@@ -173,6 +342,107 @@ end
 
 function M.setup(opts)
     current = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
+    if current.ai.provider == "openai_compatible" then
+        local supplied = (opts or {}).ai or {}
+        assert(supplied.base_url and supplied.model, "OpenAI compatible provider requires base_url and model")
+        if supplied.pricing == nil then
+            current.ai.pricing = false
+        end
+        if supplied.api_key_env == nil then
+            current.ai.api_key_env = "AI_API_KEY"
+        end
+    end
+    if opts and opts.ai and opts.ai.max_questions and not opts.ai.max_rounds then
+        current.ai.max_rounds = opts.ai.max_questions
+    end
+    assert(
+        current.ai.max_rounds >= 0 and current.ai.max_rounds <= 10 and current.ai.max_rounds % 1 == 0,
+        "invalid round limit"
+    )
+    assert(
+        current.ai.max_questions_per_round >= 1
+            and current.ai.max_questions_per_round <= 20
+            and current.ai.max_questions_per_round % 1 == 0,
+        "invalid questions per round"
+    )
+    assert(
+        current.ai.context_tokens >= 2048
+            and current.ai.memory.context_tokens >= 0
+            and current.ai.memory.recent_turns >= 1,
+        "invalid memory budget"
+    )
+    assert(({ plan = true, build = true, auto = true })[current.ai.mode], "invalid AI mode")
+    local permissions = current.ai.permissions
+    for _, key in ipairs({ "roots", "domains" }) do
+        assert(type(permissions[key]) == "table" and vim.islist(permissions[key]), "invalid permission " .. key)
+        for _, value in ipairs(permissions[key]) do
+            assert(type(value) == "string" and value ~= "", "invalid permission scope")
+        end
+    end
+    for tool, rule in pairs(permissions.rules) do
+        assert(
+            ({ read_file = true, search_files = true, fetch_url = true, run_command = true })[tool],
+            "unknown permission tool"
+        )
+        assert(({ allow = true, ask = true, deny = true })[rule], "invalid permission decision")
+    end
+    assert(type(permissions.auto_apply_documents) == "boolean", "invalid document write policy")
+    for _, key in ipairs({
+        "max_calls_per_item",
+        "max_output_bytes",
+        "timeout_ms",
+        "snapshot_max_files",
+        "snapshot_max_bytes",
+        "max_processes",
+        "memory_mb",
+        "cpu_seconds",
+        "scratch_mb",
+    }) do
+        assert(
+            type(permissions[key]) == "number" and permissions[key] >= 1 and permissions[key] % 1 == 0,
+            "invalid permission limit: " .. key
+        )
+    end
+    assert(permissions.max_output_bytes >= 4, "research output budget must fit UTF-8")
+    local daily = current.ai.planning
+    assert(
+        daily.max_rounds_per_item >= 0 and daily.max_rounds_per_item <= 10 and daily.max_rounds_per_item % 1 == 0,
+        "invalid item rounds"
+    )
+    assert(
+        daily.questions_per_round >= 1 and daily.questions_per_round <= 3 and daily.questions_per_round % 1 == 0,
+        "invalid daily question count"
+    )
+    assert(daily.max_requests_per_item >= 2 and daily.max_requests_per_item % 1 == 0, "invalid per-item request cap")
+    assert(
+        daily.max_requests_total == false
+            or type(daily.max_requests_total) == "number"
+                and daily.max_requests_total >= 2
+                and daily.max_requests_total % 1 == 0,
+        "invalid daily request cap"
+    )
+    assert(type(daily.stream) == "boolean", "invalid daily stream setting")
+    assert(type(daily.image_paste_key) == "string" and daily.image_paste_key ~= "", "invalid image paste key")
+    if
+        opts
+        and opts.planning
+        and opts.planning.capacity_minutes
+        and opts.planning.reserve_minutes == nil
+        and opts.planning.reserve_ratio == nil
+        and current.planning.capacity_minutes <= 60
+    then
+        current.planning.reserve_minutes = math.floor(current.planning.capacity_minutes / 8)
+    end
+    if opts and opts.planning and opts.planning.reserve_ratio ~= nil and opts.planning.reserve_minutes == nil then
+        current.planning.reserve_minutes = false
+    end
+    assert(
+        current.planning.reserve_minutes == false
+            or type(current.planning.reserve_minutes) == "number"
+                and current.planning.reserve_minutes >= 0
+                and current.planning.reserve_minutes < current.planning.capacity_minutes,
+        "invalid reserve minutes"
+    )
     validate(current)
     return current
 end

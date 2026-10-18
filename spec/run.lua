@@ -187,10 +187,12 @@ test("command completion distinguishes subcommands and arguments", function()
     eq(commands.complete("by_", ":Todo open by_"), { "by_urgency", "by_time", "by_tag" })
 end)
 
-test("plugin UI source contains no mouse or Ctrl-Space mappings", function()
+test("plugin UI has no interactive mouse handlers or Ctrl-Space mappings", function()
     for _, path in ipairs(vim.fn.glob(root .. "/lua/**/*.lua", false, true)) do
         local source = table.concat(vim.fn.readfile(path), "\n")
-        assert(not source:find("<LeftMouse>", 1, true), "mouse mapping remains in " .. path)
+        -- Dashboard-only <Nop> guards intentionally consume accidental clicks;
+        -- their behavior and global isolation are checked with real mouse input.
+        assert(not source:find("<LeftMouse>", 1, true) or path:match("/ui/panel.lua$"), "mouse mapping remains in " .. path)
         assert(not source:find("getmousepos", 1, true), "mouse handling remains in " .. path)
         assert(not source:find("<C-Space>", 1, true), "Ctrl-Space mapping remains in " .. path)
     end
@@ -1141,6 +1143,7 @@ if nui_ok then
     end)
 
     test("NUI form mounts structured fields and closes cleanly", function()
+        vim.o.columns=140;vim.o.lines=45
         local fake_service = require("todo.service").new(memory_store({}))
         package.loaded.todo = {
             _service = function()
@@ -1311,6 +1314,7 @@ if nui_ok then
     end)
 
     test("NUI notice form and forced reminder popup are keyboard driven", function()
+        vim.o.columns=140;vim.o.lines=45
         local fake_service = require("todo.service").new(memory_store({}))
         local notice_form = require("todo.ui.notice_form")
         local saved
@@ -1405,7 +1409,7 @@ end
 
 local sqlite_ok = pcall(require, "sqlite.db")
 if sqlite_ok then
-    test("SQLite v1 databases migrate to sync schema v3", function()
+    test("SQLite v1 databases migrate to workspace schema v4", function()
         local path = vim.fn.tempname() .. ".db"
         local sqlite = require("sqlite.db")
         local db = sqlite:open(path)
@@ -1429,7 +1433,7 @@ if sqlite_ok then
         eq(legacy.kind, "task")
         eq(legacy.reminder, nil)
         local version = store.db:eval("SELECT MAX(version) AS version FROM schema_migrations")[1]
-        eq(tonumber(version.version), 3)
+        eq(tonumber(version.version), 4)
         local backups = vim.fn.glob(path .. ".pre-sync-*.db", false, true)
         eq(#backups, 1)
         local backup = sqlite:open(backups[1])

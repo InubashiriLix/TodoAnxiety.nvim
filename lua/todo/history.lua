@@ -183,14 +183,20 @@ end
 -- After a restore the live revision changed, so re-anchor any remaining entry
 -- that still expects the task in its now-current business state. This is what
 -- lets consecutive undo/redo of the same task keep working.
-function M:refresh(id, task)
+function M:refresh(id, task, skip_custom)
     local current = business(capture(task))
     for _, entry in ipairs(self.undo_stack) do
+        if not skip_custom and entry.custom and entry.refresh then
+            entry.refresh()
+        end
         if entry.id == id and vim.deep_equal(business(entry.after), current) then
             entry.expected_revision = task.sync_revision
         end
     end
     for _, entry in ipairs(self.redo_stack) do
+        if not skip_custom and entry.custom and entry.refresh then
+            entry.refresh()
+        end
         if entry.id == id and vim.deep_equal(business(entry.before), current) then
             entry.expected_revision = task.sync_revision
         end
@@ -213,4 +219,40 @@ function M:pop_redo(restored)
     return entry
 end
 
+function M:push_custom(entry)
+    entry.custom = true
+    self.undo_stack[#self.undo_stack + 1] = entry
+    while #self.undo_stack > LIMIT do
+        table.remove(self.undo_stack, 1)
+    end
+    self:clear_redo()
+end
+function M:apply_custom(direction)
+    local source = direction == "undo" and self.undo_stack or self.redo_stack
+    local target = direction == "undo" and self.redo_stack or self.undo_stack
+    local entry = source[#source]
+    local ok, result = pcall(entry.apply, direction)
+    if not ok then
+        return nil, { history = "conflict", message = tostring(result) }
+    end
+    table.remove(source)
+    target[#target + 1] = entry
+    for _, stack in ipairs({ self.undo_stack, self.redo_stack }) do
+        for _, other in ipairs(stack) do
+            if other.custom and other.refresh then
+                other.refresh()
+            end
+        end
+    end
+    for _, uuid in ipairs(entry.task_uuids or {}) do
+        local rows = self.service.store.db:eval("SELECT id FROM tasks WHERE sync_uuid=:uuid", { uuid = uuid })
+        if type(rows) == "table" and rows[1] then
+            local task = self.service.store:get(tonumber(rows[1].id))
+            if task then
+                self:refresh(task.id, task, true)
+            end
+        end
+    end
+    return result
+end
 return M

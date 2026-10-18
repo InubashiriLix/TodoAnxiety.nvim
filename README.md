@@ -55,6 +55,8 @@ Example with lazy.nvim:
   dependencies = {
     "kkharji/sqlite.lua",
     "MunifTanjim/nui.nvim",
+    -- Optional; configure image.nvim separately as documented below.
+    "3rd/image.nvim",
   },
   config = function()
     require("todo").setup()
@@ -63,6 +65,8 @@ Example with lazy.nvim:
 ```
 
 Run `:checkhealth todo` after installation.
+
+[Inline image configuration and troubleshooting](doc/images.md).
 
 ## Usage
 
@@ -133,7 +137,9 @@ The `/` search input closes as soon as focus moves away from it. A floating
 dashboard also closes whenever focus enters a regular editing window, while
 its own detail, menu, search, and tag-manager windows are treated as part of
 todo.nvim. A sidebar remains available after focus returns to the editor.
-Window-navigation mappings such as `Ctrl-j/k` are never overridden.
+The dashboard blocks mouse navigation and `Ctrl-h/j/k/l` locally to keep focus
+inside its controls. In AI planning, Normal-mode `Ctrl-h/j/k/l` moves between
+panes. Mappings in ordinary editing buffers remain unchanged.
 
 In the archived view, select a task and press `D` to open a confirmation menu;
 Cancel is selected by default to prevent an accidental Enter from deleting it.
@@ -232,11 +238,13 @@ The add/edit form uses separate controls instead of parsing a text buffer:
 
 Use Tab and Shift-Tab to move between fields. In the description editor's
 Insert mode, Tab and Shift-Tab are left to editing and completion plugins;
-press Escape first, then Tab or Shift-Tab to switch fields. Use `<C-s>` to save, and `q` or Escape
+press Escape first, then Tab or Shift-Tab to switch fields. Use `:w` to save, `:wq` / `:x` to save and return, and Normal `+` to maximize the focused field. Use `q` or Escape
 in Normal mode, or `<C-q>` from either mode, to close. In Insert mode Escape
 still only leaves Insert, so it never closes a field you are typing in. Unsaved
-forms ask whether to save, discard, or continue editing. todo.nvim registers no mouse mappings; every plugin action
-uses one visible keyboard path. When a form is opened from a dashboard,
+forms ask whether to save, discard, or continue editing. Dashboard buffers locally
+block mouse clicks/drags and Ctrl-h/j/k/l to protect keyboard selection; mappings
+in other windows remain unchanged. AI panes support Normal-mode Ctrl-h/j/k/l.
+When a form is opened from a dashboard,
 the dashboard is suspended and restored afterward so the two interfaces never
 overlap.
 
@@ -431,3 +439,28 @@ script automatically detects the usual lazy.nvim paths, or accepts
 With SQLite available, the suite also runs two-device sync tests against local
 bare Git repositories, without GitHub credentials or network access. CI runs
 on Linux and macOS with Neovim 0.10.4 and the current stable release.
+
+## Today planning and DeepSeek
+
+`:Todo today` opens a manual execution plan, independent of task deadlines.
+`:Todo plan` prepares and reviews tasks sequentially with a Vim composer, images and streaming replies; `Q` clarifies the selected task. In the default plan mode, AI changes
+remain drafts until individually selected and applied. One `U` undoes the batch.
+
+Enable `ai.enabled = true` in setup, then use `:Todo ai key` (hidden input), or set
+`DEEPSEEK_API_KEY`. Device-local credentials are stored with mode 0600 and never
+synced. An existing `~/.deepseek-mcp/config.json` key is supported as a fallback.
+Language/persona are editable with `:Todo ai settings`. Default limits are ten
+questions and twenty requests per conversation; costs are visible estimates.
+
+Images can be pasted into Markdown descriptions and AI answers, copied into
+managed storage and synced by the optional Rust server. Network IO is async;
+operation cards show stages, elapsed time and errors. Use `:Todo diagnostics` to
+inspect redacted logs and `:checkhealth todo` for local setup checks.
+
+Sync is manual by default, with no idle or focus polling. Contextual keys reuse `t` to add/remove plan items. AI question rounds support single/multiple choices, per-option notes, persisted drafts and sourced memory management. Resizing preserves editor buffers and selections.
+
+See [the planning guide](doc/planning.md) and [the single-binary server guide](server/README.md).
+
+[Lua configuration](doc/configuration.md) · [Authentication and security](doc/security.md)
+
+Daily planning supports plan/build/auto modes (`M`), inline permissions (`y/Y/n`), scoped research and read-only sandbox commands. See [AI permissions and sandboxing](doc/ai-permissions.md).

@@ -9,7 +9,6 @@ local context = require("todo.ui.context_forms")
 
 local hints = context.hints()
 
-local Input = require("nui.input")
 local Layout = require("nui.layout")
 local Menu = require("nui.menu")
 local Popup = require("nui.popup")
@@ -28,10 +27,10 @@ local function popup(label, enter)
 end
 
 local function input(label, value, on_change)
-    return Input({
+    return require("todo.ui.field").new({
         border = { style = config.get().ui.float.border, text = { top = " " .. label .. " " } },
         win_options = { winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
-    }, { default_value = value or "", on_change = on_change })
+    }, value, on_change)
 end
 
 local function parse_weekdays(value)
@@ -181,12 +180,22 @@ function M.open(task, on_save, opts)
         components.recurrence_spec.border:set_text("bottom", hint, "right")
     end
 
+    local reflow
     local function focus(index)
         if owner.closed then
             return
         end
         focus_index = index < 1 and #focusables or index > #focusables and 1 or index
         local target = focusables[focus_index]
+        if reflow and (vim.o.lines < 30 or vim.o.columns < 60) and not target.component.winid then
+            vim.schedule(function()
+                if not owner.closed then
+                    reflow()
+                    focus(index)
+                end
+            end)
+            return
+        end
         vim.cmd("stopinsert")
         vim.api.nvim_set_current_win(target.component.winid)
         if target.insert then
@@ -216,13 +225,25 @@ function M.open(task, on_save, opts)
         local insert_mode = mode == "i"
         if index == 1 then
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
             end
         elseif index == 2 then
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("c", "calendar", "月历", g.field, g.field)
                 out[#out + 1] = context.e("t", "today / time", "今天 / 时间", g.field, g.field)
@@ -230,7 +251,13 @@ function M.open(task, on_save, opts)
             end
         elseif index == 3 then
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("t", "duration picker", "时长选择器", g.field, g.field)
                 out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
@@ -241,19 +268,38 @@ function M.open(task, on_save, opts)
             out[#out + 1] = context.e("<CR>", "edit value", "编辑取值", g.field, g.field)
         elseif index == 5 then
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
             end
         elseif index == 6 then
             out[#out + 1] = context.e("<CR>", "choose existing tags", "选择已有标签", g.field, g.field)
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             end
         elseif index == 7 then
             if insert_mode then
-                out[#out + 1] = context.e("<Tab>/<S-Tab>", "native editing / completion", "原生编辑／补全", g.edit, g.edit)
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] =
+                    context.e("<Tab>/<S-Tab>", "native editing / completion", "原生编辑／补全", g.edit, g.edit)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("<CR>", "go to footer", "前往底部", g.nav, g.nav)
             end
@@ -268,7 +314,11 @@ function M.open(task, on_save, opts)
                 out[#out + 1] = context.e("<CR>", "new line", "换行", g.edit, g.edit)
             end
             local has_escape = false
-            for _, action in ipairs(out) do if action.key == "<Esc>" then has_escape = true end end
+            for _, action in ipairs(out) do
+                if action.key == "<Esc>" then
+                    has_escape = true
+                end
+            end
             if not has_escape then
                 out[#out + 1] = context.e("<Esc>", "leave insert", "退出插入模式", g.edit, g.edit)
             end
@@ -276,6 +326,13 @@ function M.open(task, on_save, opts)
             out[#out + 1] = context.e("i/a", "edit text", "编辑文本", g.edit, g.edit)
             if index == 7 then
                 out[#out + 1] = context.e("j/k, gg/G", "read description", "浏览描述", g.nav, g.nav)
+            end
+        end
+
+        if index == 7 then
+            out[#out + 1] = context.e("Ctrl-v", "paste image attachment", "粘贴图片附件", g.edit, g.edit)
+            if not insert_mode then
+                out[#out + 1] = context.e("gx", "open image attachment", "打开图片附件", g.edit, g.edit)
             end
         end
 
@@ -392,7 +449,7 @@ function M.open(task, on_save, opts)
             local time_popup = Popup({
                 relative = "editor",
                 position = "50%",
-                size = { width = 48, height = 7 },
+                size = require("todo.ui.responsive").size(48, 7),
                 enter = true,
                 border = { style = config.get().ui.float.border, text = { top = " " .. i18n.t("choose_time") .. " " } },
                 zindex = 140,
@@ -443,6 +500,7 @@ function M.open(task, on_save, opts)
                 focus(2)
             end
             time_popup:mount()
+            require("todo.ui.responsive").popup(time_popup, 48, 7)
             render_time()
             attach_hints(time_popup.bufnr, function()
                 local g = context.groups()
@@ -501,7 +559,7 @@ function M.open(task, on_save, opts)
         calendar_popup = Popup({
             relative = "editor",
             position = "50%",
-            size = { width = 32, height = 10 },
+            size = require("todo.ui.responsive").size(32, 10),
             enter = true,
             border = { style = config.get().ui.float.border, text = { top = " " .. i18n.t("calendar") .. " " } },
             zindex = 130,
@@ -565,6 +623,7 @@ function M.open(task, on_save, opts)
             focus(2)
         end
         calendar_popup:mount()
+        require("todo.ui.responsive").popup(calendar_popup, 32, 10)
         render_calendar()
         attach_hints(calendar_popup.bufnr, function()
             local g = context.groups()
@@ -640,6 +699,9 @@ function M.open(task, on_save, opts)
         pcall(function()
             hints.close(owner)
         end)
+        for _, component in pairs(components) do
+            pcall(component.unmount, component)
+        end
         pcall(function()
             owner.layout:unmount()
         end)
@@ -719,8 +781,13 @@ function M.open(task, on_save, opts)
         })
         owner.transient = menu
         menu:mount()
-        vim.keymap.set("n", "q", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
-        vim.keymap.set("n", "<C-q>", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
+        require("todo.ui.responsive").popup(menu, 48, 10)
+        vim.keymap.set("n", "q", function()
+            menu:unmount()
+        end, { buffer = menu.bufnr, silent = true })
+        vim.keymap.set("n", "<C-q>", function()
+            menu:unmount()
+        end, { buffer = menu.bufnr, silent = true })
         attach_hints(menu.bufnr, function()
             local g = context.groups()
             return {
@@ -735,6 +802,7 @@ function M.open(task, on_save, opts)
         end)
     end
 
+    require("todo.assets").attach(components.description.bufnr, require("todo")._service().store)
     for index, target in ipairs(focusables) do
         for _, mode in ipairs({ "n", "i" }) do
             -- The description is a free-form text buffer: keep the native <Tab>
@@ -841,26 +909,38 @@ function M.open(task, on_save, opts)
     end, { buffer = components.recurrence.bufnr })
 
     local size =
-        { width = math.max(48, math.min(92, vim.o.columns - 4)), height = math.max(24, math.min(31, vim.o.lines - 4)) }
+        { width = math.max(1, math.min(92, vim.o.columns - 4)), height = math.max(1, math.min(31, vim.o.lines - 4)) }
     -- Reserve up to three rows so the dynamic footer can show wrapped hints.
     local footer_size = math.max(1, math.min(3, size.height - 18))
-    owner.layout = Layout(
-        { relative = "editor", position = "50%", size = size },
+    local box = Layout.Box({
+        Layout.Box(components.header, { size = 1 }),
+        Layout.Box(components.title, { size = 3 }),
         Layout.Box({
-            Layout.Box(components.header, { size = 1 }),
-            Layout.Box(components.title, { size = 3 }),
-            Layout.Box({
-                Layout.Box(components.trigger, { size = "55%" }),
-                Layout.Box(components.interval, { size = "45%" }),
-            }, { dir = "row", size = 3 }),
-            Layout.Box(components.recurrence, { size = 3 }),
-            Layout.Box(components.recurrence_spec, { size = 3 }),
-            Layout.Box(components.tags, { size = 3 }),
-            Layout.Box(components.description, { grow = 1 }),
-            Layout.Box(components.footer, { size = footer_size }),
-        }, { dir = "col" })
-    )
+            Layout.Box(components.trigger, { size = "55%" }),
+            Layout.Box(components.interval, { size = "45%" }),
+        }, { dir = "row", size = 3 }),
+        Layout.Box(components.recurrence, { size = 3 }),
+        Layout.Box(components.recurrence_spec, { size = 3 }),
+        Layout.Box(components.tags, { size = 3 }),
+        Layout.Box(components.description, { grow = 1 }),
+        Layout.Box(components.footer, { size = footer_size }),
+    }, { dir = "col" })
+    local function geometry()
+        local size = require("todo.ui.responsive").size(92, 31)
+        local tree = box
+        if vim.o.lines < 30 or vim.o.columns < 60 then
+            tree = Layout.Box({ Layout.Box(focusables[focus_index or 1].component, { grow = 1 }) }, { dir = "col" })
+        end
+        return { relative = "editor", position = "50%", size = size }, tree
+    end
+    local placement, tree = geometry()
+    owner.layout = Layout(placement, tree)
+    reflow = function()
+        local pos, next_tree = geometry()
+        owner.layout:update(pos, next_tree)
+    end
     owner.layout:mount()
+    require("todo.ui.responsive").watch(owner, reflow)
     set_lines(components.header, { "  " .. i18n.t(task.id and "notice" or "notice_new") })
     set_lines(components.description, vim.split(fields.description, "\n", { plain = true }), true)
     render_footer()
