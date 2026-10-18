@@ -50,6 +50,8 @@ lazy.nvim 安装示例：
   dependencies = {
     "kkharji/sqlite.lua",
     "MunifTanjim/nui.nvim",
+    -- 可选；按下方图片文档单独配置 image.nvim。
+    "3rd/image.nvim",
   },
   config = function()
     require("todo").setup({
@@ -60,6 +62,8 @@ lazy.nvim 安装示例：
 ```
 
 安装完成后运行 `:checkhealth todo` 检查运行环境。
+
+[内嵌图片推荐配置与排查](doc/images.zh-CN.md)。
 
 ## 使用方法
 
@@ -123,8 +127,9 @@ close
 
 `/` 搜索框失去焦点时会立即收起。只要焦点进入普通编辑窗口，浮动 Dashboard
 也会关闭；Dashboard 自己的详情、菜单、搜索和标签管理窗口仍被视作 todo.nvim
-的一部分。侧栏在焦点返回编辑器后会继续保留。插件不会覆盖或禁用 `Ctrl-j/k`
-等用户自己的窗口导航快捷键。
+的一部分。侧栏在焦点返回编辑器后会继续保留。主面板局部屏蔽鼠标点击、拖动和
+`Ctrl-h/j/k/l` 意外跳焦点；其它编辑窗口的用户键位保持不变。AI 工作区的 Normal
+模式支持 `Ctrl-h/j/k/l` 在内部区域之间切换。
 
 在“已归档”视图选中任务后按 `D`，确认后即可永久删除；确认菜单默认停在“取消”，
 避免误按 Enter。也可以使用 `:Todo delete [id]`。永久删除仅允许作用于已归档任务，
@@ -206,11 +211,10 @@ N 分钟、小时或天。重复提醒间隔会预填上一次使用的值；在
 
 使用 Tab 和 Shift-Tab 在字段间移动；描述编辑区的 Insert 模式不占用这两个键，
 交由编辑器和补全插件处理，先按 Esc 后再用 Tab／Shift-Tab 切换字段。
-`<C-s>` 保存；Normal 模式按 `q` 或 Esc，
+Normal 模式 `:w` 保存、`:wq` / `:x` 保存并返回；`+` 最大化当前字段。Normal 模式按 `q` 或 Esc，
 或在任意模式按 `<C-q>` 关闭。Insert 模式下 Esc 仍然只退出 Insert，不会关闭正在
 输入的字段。有未保存内容时，
-表单会询问保存、放弃或继续编辑。todo.nvim 不再注册任何鼠标映射，所有操作只有
-一套明确可见的键盘路径。从 dashboard 打开
+表单会询问保存、放弃或继续编辑。主面板使用局部鼠标拦截保护键盘选择。从 dashboard 打开
 表单时，原面板会暂时收起，并在表单关闭后恢复，不会出现两个界面互相重叠。
 
 ## 配置
@@ -411,3 +415,25 @@ NUI 集成测试同样要求 `nui.nvim`。测试脚本会自动检测 lazy.nvim 
 
 有 SQLite 依赖时，还会使用本地裸 Git 仓库执行双设备同步测试，无需 GitHub 凭据或联网。
 CI 配置覆盖 Linux、macOS，以及 Neovim 0.10.4 和当前稳定版。
+
+## 今日计划与 DeepSeek 编排
+
+`:Todo today` 打开独立于截止时间的今日执行清单；`:Todo plan` 打开逐项检查的每日规划工作区（Vim 输入、图片与流式回复），
+任务上按 `Q` 澄清描述。默认 plan 模式下，AI 修改先进入逐条审批，提交后 `U` 可整批撤回。
+
+在 setup 中开启 `ai.enabled = true`，再执行 `:Todo ai key` 隐藏输入密钥，或使用
+`DEEPSEEK_API_KEY`。本机凭据以 0600 权限保存，不参与同步，也支持读取已有
+`~/.deepseek-mcp/config.json`。`:Todo ai settings` 设置回复语言和人设。
+每个会话默认最多 10 个问题、20 次请求，并显示费用估算。
+
+任务描述和 AI 回答支持粘贴图片，文件复制到插件管理目录。可选 Rust 单文件服务
+同步任务、今日计划、对话、图片和用量，无需 Docker。网络请求异步执行，有阶段、
+转动指示、耗时和错误反馈；`:Todo diagnostics` 查看脱敏诊断日志。
+
+默认手动同步，不在空闲或重新聚焦时请求网络。`t` 根据当前任务切换加入／移出计划，底部提示按状态变化。AI 支持多题选项表单、逐项说明和可管理的来源记忆；窗口缩放保留草稿。
+
+详见[完整使用指南](doc/planning.md)和[服务端部署说明](server/README.md)。
+
+[Lua 完整配置示例](doc/configuration.md) · [认证与安全边界](doc/security.md)
+
+每日规划支持 `M` 切换 plan/build/auto，申请卡 `y/Y/n` 审批资料和命令，详见[AI 权限与沙盒](doc/ai-permissions.md)。

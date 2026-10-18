@@ -48,6 +48,7 @@ test("context help groups all actions and restores focus without editing", funct
 end)
 
 test("task and notice descriptions retain insert Tab, normal Tab moves focus", function()
+    vim.o.columns=140;vim.o.lines=45
     for _, module in ipairs({ "todo.ui.form", "todo.ui.notice_form" }) do
         vim.cmd("stopinsert")
         local form = require(module)

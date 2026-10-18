@@ -18,14 +18,31 @@ if [[ -d "$sqlite_path" ]]; then
   args+=(--cmd "set runtimepath+=$sqlite_path")
 fi
 
+if command -v python3 >/dev/null; then
+  python3 spec/http_stream.py
+fi
+nvim "${args[@]}" -l spec/stream.lua
 nvim "${args[@]}" -l spec/run.lua
 nvim "${args[@]}" -l spec/postpone.lua
 nvim "${args[@]}" -l spec/context_actions.lua
 nvim "${args[@]}" -l spec/undo.lua
 nvim "${args[@]}" -l spec/sync_progress.lua
+nvim "${args[@]}" -l spec/network_ui.lua
+nvim "${args[@]}" -l spec/config_security.lua
+nvim "${args[@]}" -l spec/daily_contrast.lua
+nvim "${args[@]}" -l spec/assets_ui.lua
 
 if [[ -d "$sqlite_path" ]]; then
   nvim "${args[@]}" -l spec/sync.lua
+  nvim "${args[@]}" -l spec/planning_features.lua
+  nvim "${args[@]}" -l spec/ai_references.lua
+  nvim "${args[@]}" -l spec/daily.lua
+  nvim "${args[@]}" -l spec/ai_permissions.lua
+  nvim "${args[@]}" -l spec/ai_understanding.lua
+  nvim "${args[@]}" -l spec/ai_recovery.lua
+  if [[ -x "${TODO_SERVER_BIN:-$repo_root/server/target/debug/todoanxiety-sync}" ]]; then
+    nvim "${args[@]}" -l spec/cloud.lua
+  fi
 fi
 
 if [[ -d "$nui_path" ]]; then
@@ -36,5 +53,15 @@ fi
 
 if [[ -d "$nui_path" && -d "$sqlite_path" ]]; then
   nvim "${args[@]}" -l spec/history_ui.lua
+  nvim "${args[@]}" --cmd "set columns=140 lines=45" -l spec/planner_ui.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/redesign.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_ui.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_recovery_ui.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/editor_commands.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/panel_navigation.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/performance.lua
   nvim "${args[@]}" -l spec/smoke.lua
+  if command -v python3 >/dev/null && python3 -c 'import msgpack' 2>/dev/null; then
+    python3 spec/editor_input.py
+  fi
 fi

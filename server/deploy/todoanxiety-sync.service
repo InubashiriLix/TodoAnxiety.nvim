@@ -1,0 +1,25 @@
+[Unit]
+Description=TodoAnxiety task and attachment sync
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=todoanxiety-sync
+StateDirectoryMode=0700
+UMask=0077
+Environment=TODOANXIETY_DATA_DIR=/var/lib/todoanxiety-sync
+Environment=TODOANXIETY_BIND=127.0.0.1:8787
+ExecStart=/usr/local/bin/todoanxiety-sync serve
+Restart=on-failure
+RestartSec=3
+MemoryMax=512M
+TasksMax=128
+LimitNOFILE=4096
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -85,10 +85,10 @@ local function migrate(db, path)
   )]])
     local rows = db:eval("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
     local version = rows[1] and tonumber(rows[1].version) or 0
-    if version > 3 then
+    if version > 4 then
         error("database schema version " .. version .. " is newer than this todo.nvim supports")
     end
-    if version > 0 and version < 3 then
+    if version > 0 and version < 4 then
         -- VACUUM INTO takes a consistent snapshot, including committed WAL data.
         local backup = path .. ".pre-sync-" .. require("todo.sync.codec").uuid() .. ".db"
         db:execute("VACUUM INTO '" .. backup:gsub("'", "''") .. "'")
@@ -122,6 +122,12 @@ local function migrate(db, path)
             db:eval("INSERT INTO schema_migrations(version, applied_at) VALUES(3, :now)", { now = os.time() })
         end)
     end
+    if version < 4 then
+        transaction(db, function()
+            require("todo.workspace").migrate(db)
+            db:eval("INSERT INTO schema_migrations(version, applied_at) VALUES(4, :now)", { now = os.time() })
+        end)
+    end
 end
 
 local function query_one(db, sql, params)
@@ -136,6 +142,7 @@ function M.open(path)
     end
     vim.fn.mkdir(vim.fs.dirname(path), "p")
     local db = sqlite:open(path)
+    require("todo.sqlite").literal_bindings(db)
     db:execute("PRAGMA foreign_keys = ON")
     db:execute("PRAGMA journal_mode = WAL")
     db:execute("PRAGMA busy_timeout = 3000")
@@ -223,6 +230,7 @@ function M:_hydrate(rows)
 end
 
 function M:list(opts)
+    require("todo.performance").count("tasks.list")
     opts = opts or {}
     local predicate = opts.archived and "archived_at IS NOT NULL" or "archived_at IS NULL"
     if opts.kind then
@@ -320,6 +328,7 @@ function M:stats()
 end
 
 function M:get(id)
+    require("todo.performance").count("tasks.get")
     local row = query_one(self.db, "SELECT * FROM tasks WHERE id = :id", { id = id })
     return row and self:_hydrate({ row })[1] or nil
 end

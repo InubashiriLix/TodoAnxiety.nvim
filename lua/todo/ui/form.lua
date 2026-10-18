@@ -10,7 +10,6 @@ local context = require("todo.ui.context_forms")
 
 local hints = context.hints()
 
-local Input = require("nui.input")
 local Layout = require("nui.layout")
 local Line = require("nui.line")
 local Menu = require("nui.menu")
@@ -51,14 +50,11 @@ local function popup(label, opts)
 end
 
 local function input(label, value, on_change)
-    return Input({
-        border = border(label),
-        win_options = { winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
-    }, {
-        default_value = value or "",
-        on_change = on_change,
-        on_close = function() end,
-    })
+    return require("todo.ui.field").new(
+        { border = border(label), win_options = { winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" } },
+        value,
+        on_change
+    )
 end
 
 local function set_lines(component, lines)
@@ -130,8 +126,13 @@ local function open_menu(owner, title, values, selected, on_submit, on_close)
     })
     owner.transient = menu
     menu:mount()
-    vim.keymap.set("n", "q", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
-    vim.keymap.set("n", "<C-q>", function() menu:unmount() end, { buffer = menu.bufnr, silent = true })
+    require("todo.ui.responsive").popup(menu, 48, 10)
+    vim.keymap.set("n", "q", function()
+        menu:unmount()
+    end, { buffer = menu.bufnr, silent = true })
+    vim.keymap.set("n", "<C-q>", function()
+        menu:unmount()
+    end, { buffer = menu.bufnr, silent = true })
     if owner.attach_hints then
         owner.attach_hints(menu.bufnr, function()
             local g = context.groups()
@@ -159,8 +160,8 @@ end
 
 local function form_size()
     return {
-        width = math.max(40, math.min(92, vim.o.columns - 4)),
-        height = math.max(18, math.min(32, vim.o.lines - 4)),
+        width = math.max(1, math.min(92, vim.o.columns - 4)),
+        height = math.max(1, math.min(32, vim.o.lines - 4)),
     }
 end
 
@@ -171,8 +172,27 @@ function M.open(task, on_save, opts)
     end
     highlights.setup()
 
-    local owner = { state = FormState.new(task), transient = nil, closed = false }
+    local owner = { state = FormState.new(task), transient = nil, closed = false, editors = {}, saved_task = task }
     local state = owner.state
+    -- :x checks 'modified' before QuitPre. All fields save one task, so a
+    -- mutation in any field must mark the other managed buffers dirty too.
+    local function mark_fields_dirty()
+        for buf in pairs(owner.editors) do
+            if vim.api.nvim_buf_is_valid(buf) then
+                vim.bo[buf].modified = true
+            end
+        end
+    end
+    for _, method in ipairs({ "set", "add_tag", "remove_tag", "remove_last_tag" }) do
+        local original = state[method]
+        state[method] = function(self, ...)
+            local result = original(self, ...)
+            if self:is_dirty() then
+                mark_fields_dirty()
+            end
+            return result
+        end
+    end
     local components = {}
     local focusables = {}
     local focus_index = 1
@@ -193,6 +213,9 @@ function M.open(task, on_save, opts)
     components.tag_chips = popup(i18n.t("tags"), { focusable = false })
     components.tag_input = input(i18n.t("add_tag"), "", function(value)
         tag_pending = value
+        if vim.trim(value) ~= "" then
+            mark_fields_dirty()
+        end
     end)
     components.description = popup(i18n.t("description"), { enter = true, wrap = true, markdown = true })
     components.footer = popup("", { border = false, enter = true })
@@ -209,6 +232,7 @@ function M.open(task, on_save, opts)
         { component = components.footer, insert = false },
     }
 
+    local reflow
     local function focus(index)
         if owner.closed then
             return
@@ -232,11 +256,26 @@ function M.open(task, on_save, opts)
         end
         focus_index = index
         local target = focusables[index]
+        if owner.maximized then
+            owner.maximized = index
+        end
+        if reflow and (owner.maximized or vim.o.lines < 30 or vim.o.columns < 60) and not target.component.winid then
+            vim.schedule(function()
+                if not owner.closed then
+                    reflow()
+                    focus(index)
+                end
+            end)
+            return
+        end
         if not target.component.winid or not vim.api.nvim_win_is_valid(target.component.winid) then
             return
         end
         vim.cmd("stopinsert")
         vim.api.nvim_set_current_win(target.component.winid)
+        for i, field in ipairs(focusables) do
+            field.component.border:set_highlight(i == index and "TodoHeader" or "TodoBorder")
+        end
         if target.insert then
             vim.cmd("startinsert")
         end
@@ -264,7 +303,13 @@ function M.open(task, on_save, opts)
         local insert_mode = mode == "i"
         if index == 1 then
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
             end
@@ -283,7 +328,13 @@ function M.open(task, on_save, opts)
             out[#out + 1] = context.e("x", "clear deadline", "清除截止时间", g.field, g.field)
         elseif index == 5 then
             if insert_mode then
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("t", "duration picker", "时长选择器", g.field, g.field)
                 out[#out + 1] = context.e("<CR>", "next field", "下一字段", g.nav, g.nav)
@@ -292,12 +343,20 @@ function M.open(task, on_save, opts)
             out[#out + 1] = context.e("<CR>", "create or choose tags", "创建或选择标签", g.field, g.field)
             if insert_mode then
                 out[#out + 1] = context.e(",", "commit typed tag", "提交输入的标签", g.field, g.field)
-                out[#out + 1] = context.e("<BS>", "remove last tag when empty", "输入空时删除上个标签", g.field, g.field)
+                out[#out + 1] =
+                    context.e("<BS>", "remove last tag when empty", "输入空时删除上个标签", g.field, g.field)
             end
         elseif index == 7 then
             if insert_mode then
-                out[#out + 1] = context.e("<Tab>/<S-Tab>", "native editing / completion", "原生编辑／补全", g.edit, g.edit)
-                out[#out + 1] = context.e("<Esc>", "leave insert, then Tab switches", "退出插入，再用 Tab 切换", g.nav, g.nav)
+                out[#out + 1] =
+                    context.e("<Tab>/<S-Tab>", "native editing / completion", "原生编辑／补全", g.edit, g.edit)
+                out[#out + 1] = context.e(
+                    "<Esc>",
+                    "leave insert, then Tab switches",
+                    "退出插入，再用 Tab 切换",
+                    g.nav,
+                    g.nav
+                )
             else
                 out[#out + 1] = context.e("<CR>", "go to footer", "前往底部", g.nav, g.nav)
             end
@@ -312,7 +371,11 @@ function M.open(task, on_save, opts)
                 out[#out + 1] = context.e("<CR>", "new line", "换行", g.edit, g.edit)
             end
             local has_escape = false
-            for _, action in ipairs(out) do if action.key == "<Esc>" then has_escape = true end end
+            for _, action in ipairs(out) do
+                if action.key == "<Esc>" then
+                    has_escape = true
+                end
+            end
             if not has_escape then
                 out[#out + 1] = context.e("<Esc>", "leave insert", "退出插入模式", g.edit, g.edit)
             end
@@ -323,18 +386,27 @@ function M.open(task, on_save, opts)
             end
         end
 
+        if index == 7 then
+            out[#out + 1] = context.e("Ctrl-v", "paste image attachment", "粘贴图片附件", g.edit, g.edit)
+            if not insert_mode then
+                out[#out + 1] = context.e("gx", "open image attachment", "打开图片附件", g.edit, g.edit)
+            end
+        end
+
         -- Shared form controls. Insert mode hides the n-only quit/switch keys.
         if insert_mode then
             if index ~= 7 then
                 out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
                 out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
             end
-            out[#out + 1] = context.e("<C-s>", "save", "保存", g.submit, g.submit)
+            out[#out + 1] = context.e("Esc :w", "save", "保存", g.submit, g.submit)
             out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
         else
             out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
             out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
-            out[#out + 1] = context.e("<C-s>", "save", "保存", g.submit, g.submit)
+            out[#out + 1] =
+                context.e(":w / :wq", "save / save and return", "保存／保存并返回", g.submit, g.submit)
+            out[#out + 1] = context.e("+", "maximize / restore field", "最大化／还原当前字段", g.nav, g.nav)
             out[#out + 1] = context.e("q", "close", "关闭", g.close, g.close)
             out[#out + 1] = context.e("<Esc>", "close", "关闭", g.close, g.close)
             out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
@@ -391,7 +463,6 @@ function M.open(task, on_save, opts)
                 render_footer(ctx)
             end,
         })
-
     end
     owner.attach_hints = attach_hints
     -- ----------------------------------------------------------------------
@@ -561,7 +632,7 @@ function M.open(task, on_save, opts)
         local time_popup = Popup({
             relative = "editor",
             position = "50%",
-            size = { width = 44, height = 7 },
+            size = require("todo.ui.responsive").size(44, 7),
             enter = true,
             border = {
                 style = config.get().ui.float.border,
@@ -633,6 +704,7 @@ function M.open(task, on_save, opts)
         end
 
         time_popup:mount()
+        require("todo.ui.responsive").popup(time_popup, 48, 7)
         render_time()
         attach_hints(time_popup.bufnr, function()
             local g = context.groups()
@@ -701,7 +773,7 @@ function M.open(task, on_save, opts)
         local calendar_popup = Popup({
             relative = "editor",
             position = "50%",
-            size = { width = 32, height = 10 },
+            size = require("todo.ui.responsive").size(32, 10),
             enter = true,
             border = {
                 style = config.get().ui.float.border,
@@ -780,6 +852,7 @@ function M.open(task, on_save, opts)
         owner.choose_calendar_date = apply_calendar
 
         calendar_popup:mount()
+        require("todo.ui.responsive").popup(calendar_popup, 32, 10)
         render_calendar()
         attach_hints(calendar_popup.bufnr, function()
             local g = context.groups()
@@ -787,7 +860,13 @@ function M.open(task, on_save, opts)
                 title = i18n.t("calendar"),
                 actions = {
                     context.e("hjkl", "move by day or week", "按日或周移动", g.nav, g.nav),
-                    context.e("[] / H/L / PageUp/PageDown", "previous / next month", "上个 / 下个月", g.nav, g.nav),
+                    context.e(
+                        "[] / H/L / PageUp/PageDown",
+                        "previous / next month",
+                        "上个 / 下个月",
+                        g.nav,
+                        g.nav
+                    ),
                     context.e("g", "jump to today", "跳到今天", g.picker, g.picker),
                     context.e("<CR>", "apply date", "应用日期", g.submit, g.submit),
                     context.e("t", "edit time", "编辑时间", g.picker, g.picker),
@@ -964,13 +1043,33 @@ function M.open(task, on_save, opts)
         Layout.Box(components.description, { grow = 1 }),
         Layout.Box(components.footer, { size = footer_size }),
     }, { dir = "col" })
-    owner.layout = Layout({ relative = "editor", position = "50%", size = size }, box)
+    local function geometry()
+        local next_size = form_size()
+        local tree = box
+        if owner.maximized then
+            next_size = require("todo.ui.responsive").size(vim.o.columns, vim.o.lines)
+            tree = Layout.Box({ Layout.Box(focusables[owner.maximized].component, { grow = 1 }) }, { dir = "col" })
+        elseif vim.o.lines < 30 or vim.o.columns < 60 then
+            tree = Layout.Box({ Layout.Box(focusables[focus_index or 1].component, { grow = 1 }) }, { dir = "col" })
+        end
+        return { relative = "editor", position = "50%", size = next_size }, tree
+    end
+    local placement, tree = geometry()
+    owner.layout = Layout(placement, tree)
+    require("todo.ui.editor_commands").protect_layout(owner.layout)
+    reflow = function()
+        local pos, next_tree = geometry()
+        owner.layout:update(pos, next_tree)
+    end
 
     function owner.force_close(reason)
         if owner.closed then
             return
         end
         owner.closed = true
+        for _, editor in pairs(owner.editors) do
+            editor.dispose()
+        end
         if owner.transient then
             pcall(function()
                 owner.transient:unmount()
@@ -983,6 +1082,9 @@ function M.open(task, on_save, opts)
                 require("todo.ui.tag_panel").close()
             end)
             owner.tag_panel_open = false
+        end
+        for _, component in pairs(components) do
+            pcall(component.unmount, component)
         end
         if owner.layout then
             pcall(function()
@@ -999,33 +1101,58 @@ function M.open(task, on_save, opts)
         end
     end
 
-    save = function()
+    local function flush_fields()
+        state:set("title", vim.api.nvim_buf_get_lines(components.title.bufnr, 0, 1, false)[1] or "")
+        state:set(
+            "reminder_interval",
+            vim.api.nvim_buf_get_lines(components.reminder_interval.bufnr, 0, 1, false)[1] or ""
+        )
+        state:set(
+            "description",
+            table.concat(vim.api.nvim_buf_get_lines(components.description.bufnr, 0, -1, false), "\n")
+        )
+    end
+    local function persist()
         if owner.closed then
-            return
+            return false
         end
+        flush_fields()
         if vim.trim(tag_pending) ~= "" then
             commit_tag()
         end
         local normalized, errors = state:validate()
         if not normalized then
             show_errors(errors)
-            return
+            return false, i18n.t("save_failed")
         end
         clear_errors()
-        local ok, result, save_errors = pcall(on_save, state:input())
+        local ok, result, save_errors = pcall(on_save, state:input(), owner.saved_task)
         if not ok then
             vim.notify(i18n.t("db_error", result), vim.log.levels.ERROR)
-            return
+            return false, tostring(result)
         end
         if not result then
             state.errors = save_errors or {}
             show_errors(state.errors)
             vim.notify(i18n.t("save_failed"), vim.log.levels.ERROR)
-            return
+            return false, i18n.t("save_failed")
+        end
+        if type(result) == "table" then
+            owner.saved_task = result
+            state.reminder = vim.deepcopy(result.reminder)
         end
         state:mark_saved()
+        for _, editor in pairs(owner.editors) do
+            editor.mark_saved()
+        end
+        render_footer()
+        return true
+    end
+    save = function()
+        if not persist() then
+            return
+        end
         owner.force_close("saved")
-        vim.notify(i18n.t("saved"), vim.log.levels.INFO)
     end
 
     request_close = function()
@@ -1089,11 +1216,15 @@ function M.open(task, on_save, opts)
         vim.keymap.set("i", "<C-q>", function()
             vim.schedule(request_close)
         end, { buffer = component.bufnr })
-        vim.keymap.set("n", "<C-s>", save, { buffer = component.bufnr })
-        vim.keymap.set("i", "<C-s>", function()
-            vim.schedule(save)
-        end, { buffer = component.bufnr })
+        vim.keymap.set("n", "+", function()
+            owner.maximized = not owner.maximized and index or nil
+            reflow()
+            if component.winid then
+                vim.api.nvim_set_current_win(component.winid)
+            end
+        end, { buffer = component.bufnr, nowait = true, silent = true })
     end
+    require("todo.assets").attach(components.description.bufnr, require("todo")._service().store)
     for index, target in ipairs(focusables) do
         map_focus(target.component, index, {
             skip_insert_tab = target.component == components.description,
@@ -1198,6 +1329,7 @@ function M.open(task, on_save, opts)
     end
 
     owner.layout:mount()
+    require("todo.ui.responsive").watch(owner, reflow)
     current = owner
     set_lines(components.header, { "  " .. i18n.t(task and task.id and "form_title_edit" or "form_title_new") })
     vim.api.nvim_buf_add_highlight(components.header.bufnr, components.header.ns_id, "TodoHeader", 0, 2, -1)
@@ -1210,6 +1342,20 @@ function M.open(task, on_save, opts)
     )
     vim.bo[components.description.bufnr].modifiable = true
     render_footer()
+
+    for _, target in ipairs(focusables) do
+        local component = target.component
+        owner.editors[component.bufnr] = require("todo.ui.editor_commands").attach(component, {
+            save = persist,
+            is_dirty = function()
+                flush_fields()
+                return state:is_dirty() or vim.trim(tag_pending) ~= ""
+            end,
+            close = function()
+                owner.force_close("saved")
+            end,
+        })
+    end
 
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
         buffer = components.description.bufnr,

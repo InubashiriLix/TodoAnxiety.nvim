@@ -223,8 +223,9 @@ are set.
 
 The / search input closes on WinLeave. Entering any non-todo window closes a
 floating dashboard; detail, menu, search, and tag-manager windows count as
-todo windows. A sidebar stays open. User window-navigation mappings are not
-overridden.
+todo windows. A sidebar stays open. The dashboard blocks mouse navigation and
+Ctrl-h/j/k/l locally. AI planning uses Normal-mode Ctrl-h/j/k/l for its panes;
+ordinary editing buffers retain their original mappings.
 
 The task form has separate title, priority, status, deadline, tag, and
 description controls. Tab and Shift-Tab move focus, except in the description's
@@ -351,4 +352,102 @@ if remote data is invalid and inspect the reported error before attempting
 recovery. Keep one remote/branch per database; use a different db_path for a
 different repository. Disabling sync keeps all local features available.
 
+
+TODAY AND AI PLANNING                                      *todo-ai-planning*
+
+:Todo today [YYYY-MM-DD]    Open the daily plan; deadlines stay independent.
+:Todo plan [YYYY-MM-DD]     Prepare/review tasks one at a time, then draft a plan.
+:Todo clarify [id]          Clarify a selected task; dashboard key Q.
+:Todo ai settings           Set language/persona or enter a local API key.
+:Todo ai key                Hidden API-key input; saved with file mode 0600.
+:Todo ai usage              Known estimated USD and unknown-charge count.
+:Todo ai balance            Query the account balance explicitly.
+:Todo image {path}          Copy an image into the current Markdown editor.
+:Todo diagnostics           Open redacted, rotated network diagnostics.
+:Todo sync conflicts        Resolve pending server-mode conflicts.
+
+Today keys: t toggle membership, T remove (legacy), J/K reorder, L lock, m fields, C capacity, b date,
+P AI plan, Q clarify, N notes. Standard task actions and U/Ctrl-r still work.
+Review: Space select, Enter compare, e edit, f feedback, a apply, t talk.
+Conversation: Enter/a/i answer, s skip, g draft now, v review, E extended changes,
+V text-only mode,
++ question allowance, c cancel request. Answer editor: Normal Enter/Esc save and return, Ctrl-q cancel,
+Ctrl-v paste image. Full contextual help: ? / F1.
+
+Daily planner: preparation -> per-task review -> final draft -> approval.
+All unfinished tasks are initially selected. Enter confirms locks, w starts.
+a/e create/edit, Space include/exclude, L lock, C work time, B reserve.
+New plans default to 480 minutes with 60 reserved; new members are unlocked.
+Existing dates keep their saved settings. Full locked capacity blocks paid IO;
+S explicitly continues while preserving locks.
+
+The fixed Markdown composer is a real Vim buffer, initially Normal. Insert-mode
+Enter/Tab, u/Ctrl-r, registers and Visual mode are native. Normal Enter/Esc
+returns to choices; w in the choices pane previews, then Enter submits,
+Ctrl-c cancels IO, Ctrl-q saves drafts and closes. Normal Ctrl-v is block selection;
+Insert Ctrl-v / Normal <localleader>p paste images. Normal Ctrl-h/j/k/l switches AI panes;
+Normal <localleader>q focuses options even in tiny windows. Outside the composer:
+j/k selects, Space/Enter toggles options without advancing, e annotates, i types a custom answer, Tab/h/l
+switches questions; g in choices (c in context) finishes with known facts,
+s defers, b/d shows queue/details,
+p returns to preparation, V toggles text-only, v reviews proposals, F1 shows help.
+
+ai.planning.max_rounds_per_item=10 is a per-task/date hard cap, with at most
+ai.planning.questions_per_round=3 related questions each round. Reopen/replan or
+another device does not reset counts; a new date does, reusing dated reviews.
+ai.planning.max_requests_per_item=16 includes lookups/repair/final requests;
+max_requests_total=false derives selected task count * 16 + 2. Daily workflow
+costs share ai.session_budget_usd; all workflows share ai.daily_budget_usd.
+Limits pause without discarding completed reviews. Missing billing is unknown.
+
+SSE streams only the public message; complete JSON is validated before approval.
+Set ai.planning.stream=false or ai.capabilities.streaming=false for non-SSE APIs.
+Closing cancels the active request and stops automatic queue advancement.
+Local drafts/partial output: stdpath('state')/todo.nvim/daily-drafts (0600 files).
+Date-scoped leases and checkpoint sync protect server workflows; token updates
+never sync. VimResized retains buffers, drafts and request handles.
+
+Single-task :Todo clarify retains its separate conversation settings:
+ai.max_rounds=10, ai.max_questions_per_round=8 and ai.max_requests=20.
+
+Sync defaults to manual (sync.auto=false, interval_seconds=0). Opt-in automatic
+uploads are quiet and only follow local edits. Explicit polling requires both
+auto=true and interval_seconds>0. Empty pulls do not schedule another upload.
+
+:Todo ai memory manages sourced facts and pending inferences. c confirms,
+p pins, e edits, d forgets, a adds, / searches. Memory scopes and input budgets
+are controlled through ai.memory and ai.context_tokens. Deleted facts sync as
+tombstones; derived summaries are invalidated. Local search falls back when
+FTS5 is unavailable. Cloud protocol v2 rejects incompatible clients before pull.
+One malformed-output repair is allowed and counted. Costs use returned token
+usage and configurable rates; missing usage is unknown, not zero. API keys are
+never synced. AI key lookup: ai.api_key (string/function), ai.api_key_file,
+ai.api_key_env, local credentials, then official DeepSeek OpenCode/MCP fallback.
+Sync authentication: sync.token (string/function), sync.token_file, sync.token_env.
+Explicit broken credential sources fail closed, without using another account.
+
+All runtime options can be set in require('todo').setup(); no settings UI is
+required. ai.preferences_source='config' makes Lua language/persona authoritative.
+planning.capacity_minutes, planning.reserve_minutes (false uses reserve_ratio),
+and planning.timezone_offset_minutes
+configure daily-plan defaults. ai.text_only and ai.extended set new-session
+behavior. Existing plans and conversation counters remain persistent data.
+
+Server data APIs require bearer tokens; only /v1/status exposes a public version.
+Device tokens access one shared dataset, not isolated user accounts. Task data
+is not end-to-end encrypted. See doc/security.md and doc/configuration.md.
+
+See doc/planning.md for configuration, behavior and server setup. Server mode is
+optional and mutually exclusive with Git transport. Local planning works offline.
+
 vim:tw=78:ts=8:noet:ft=help:norl:
+
+UI navigation and editing:~
+Normal + maximizes/restores the focused pane. Task editor :w saves in place;
+:wq/:x saves and returns to the parent panel. :q refuses unsaved changes, and
+:q! discards changes since the explicit save. AI input Insert Enter/Tab remain
+native; Esc leaves Insert, then Enter/Esc saves the draft and returns to choices.
+Ctrl-Alt-u/d scroll visible AI context half a page, Ctrl-Alt-b/f a full page,
+without leaving the composer. Ctrl-Alt-g resumes following the latest response.
+Main Todo buffers block mouse clicks/drags and Ctrl-h/j/k/l navigation locally.
+See doc/configuration.md for ui.daily_keys overrides and disabling actions.

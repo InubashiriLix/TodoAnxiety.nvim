@@ -235,11 +235,14 @@ local function delete_tag(owner)
     owner.transient = menu
     menu:mount()
     hints.attach(menu.bufnr, function()
-        return { title = i18n.t("tag_delete_title"), actions = {
-            { key = "j/k / Up/Down / Tab/Shift-Tab", label = context.L("Choose", "选择") },
-            { key = "Enter", label = context.L("Confirm", "确认") },
-            { key = "q / Esc / Ctrl-q / Ctrl-c", label = context.L("Cancel", "取消") },
-        } }
+        return {
+            title = i18n.t("tag_delete_title"),
+            actions = {
+                { key = "j/k / Up/Down / Tab/Shift-Tab", label = context.L("Choose", "选择") },
+                { key = "Enter", label = context.L("Confirm", "确认") },
+                { key = "q / Esc / Ctrl-q / Ctrl-c", label = context.L("Cancel", "取消") },
+            },
+        }
     end, { owner = owner })
     local close_menu = function()
         menu:unmount()
@@ -292,11 +295,12 @@ render = function(owner)
         lines[#lines + 1] = "  " .. i18n.t("no_tags")
     end
     lines[#lines + 1] = ""
-    local footer_actions = owner.hint_provider and owner.hint_provider().actions or {
-        { key = "a", label = i18n.t("action_add") },
-        { key = "/", label = i18n.t("filter") },
-        { key = "q", label = i18n.t("action_complete") },
-    }
+    local footer_actions = owner.hint_provider and owner.hint_provider().actions
+        or {
+            { key = "a", label = i18n.t("action_add") },
+            { key = "/", label = i18n.t("filter") },
+            { key = "q", label = i18n.t("action_complete") },
+        }
     local hint_start = #lines
     vim.list_extend(lines, hints.lines(footer_actions, width, 3))
     set_lines(owner.popup, lines)
