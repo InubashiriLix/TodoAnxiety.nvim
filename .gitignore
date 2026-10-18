@@ -4,10 +4,23 @@ cache/
 .vscode
 *.log
 
-# ai
+# local tool state
+.local/
 .agent/
 .claude/
 .codex/
+.ruff_cache/
 
-# Rust sync server build artifacts
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Rust sync server build artifacts and local Cargo home
 server/target/
+server/.cargo/
