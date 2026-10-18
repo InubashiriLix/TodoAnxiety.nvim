@@ -118,6 +118,12 @@ function M:tick()
         return
     end
     local now = self.now()
+    pcall(function()
+        local workspace = self.service.store.workspace
+        if workspace then
+            require("todo.routines").run(workspace, self.service, os.date("%Y-%m-%d", now))
+        end
+    end)
     for _, task in ipairs(self.service:due_reminders(now)) do
         if not self.pending_ids[task.id] then
             local marked = self.service:mark_reminded(task.id, now)

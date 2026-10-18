@@ -46,6 +46,8 @@ nvim "${args[@]}" -l spec/assets_ui.lua
 if [[ -d "$sqlite_path" ]]; then
   nvim "${args[@]}" -l spec/sync.lua
   nvim "${args[@]}" -l spec/long_context.lua
+  nvim "${args[@]}" -l spec/routines.lua
+  nvim "${args[@]}" -l spec/capture.lua
   nvim "${args[@]}" -l spec/planning_features.lua
   nvim "${args[@]}" -l spec/ai_references.lua
   nvim "${args[@]}" -l spec/daily.lua
@@ -68,6 +70,8 @@ if [[ -d "$nui_path" && -d "$sqlite_path" ]]; then
   nvim "${args[@]}" --cmd "set columns=140 lines=45" -l spec/planner_ui.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/redesign.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_ui.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/card_bars.lua
+  nvim "${args[@]}" --cmd "set columns=120 lines=45" -l spec/today_operator.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_flow.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_recovery_ui.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/editor_commands.lua

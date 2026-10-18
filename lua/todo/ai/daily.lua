@@ -208,7 +208,7 @@ function M:refresh()
         e.missing = false
     end
     for _, uuid in ipairs(seed) do
-        ensure(uuid, true, false)
+        ensure(uuid, false, false)
     end
     for _, entry in ipairs(self.state.queue) do
         if entry.uuid and tasks[entry.uuid] then

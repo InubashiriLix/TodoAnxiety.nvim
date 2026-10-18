@@ -71,12 +71,12 @@ function M.card(task, width, reason, opts)
     local badge = string.format("[P%d]", task.priority)
     local left_group = mark.left_group(task, opts.plan_state)
     local ai_group = done and nil or mark.ai_group(opts.ai_selected)
-    local left = left_group and "▎ " or "  "
-    local ai_mark = ai_group and "■ " or "  "
-    local prefix = left .. icon .. " " .. ai_mark .. badge .. " "
+    local bars = opts.bars ~= false
+    local left = bars and left_group and "▎ " or (bars and "  " or "")
+    local prefix = left .. icon .. " " .. badge .. " "
     local prefix_width = vim.fn.strdisplaywidth(prefix)
-    local right = done and "" or " ▐"
-    local right_width = done and 0 or 2
+    local right = bars and (done and "" or " ▐") or ""
+    local right_width = bars and (done and 0 or 2) or 0
     local title = M.truncate(task.title, math.max(1, width - prefix_width - right_width))
     local line1 = prefix .. title .. right
 
@@ -133,7 +133,7 @@ function M.card(task, width, reason, opts)
         badge = badge,
         due_text = due_text,
         done = done,
-        has_right = not done,
+        has_right = bars and not done,
     }
     return line1, line2, info
 end

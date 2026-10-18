@@ -189,35 +189,15 @@ function M.tasks(ctl, svc, selected, width, readonly)
     if cache and cache.card_key == key then
         local d = cache.card_doc
         if cache.card_selected ~= selected then
-            local function focus(index, active)
-                local row = d.rows[index]
-                if not row then
-                    return
-                end
-                d.lines[row] = (active and "▎ " or "  ") .. d.lines[row]:gsub("^▎ ", "  "):sub(3)
-            end
-            focus(cache.card_selected, false)
-            focus(selected, true)
-            -- The marker occupies three UTF-8 bytes when selected. Rebuild only
-            -- the two affected cards from their immutable, unfocused spans.
             d.spans = {}
-            for row, spans in ipairs(cache.card_spans) do
-                local first = d.rows[selected]
-                local active = first and row >= first and row < first + 3
+            for row, spans in ipairs(cache.card_base_spans or {}) do
                 for _, s in ipairs(spans) do
-                    local copy = s
-                    if active and row == first then
-                        copy = vim.tbl_extend("force", {}, s)
-                        if copy.start > 0 then
-                            copy.start = copy.start + 2
-                        end
-                        if copy.finish > 0 then
-                            copy.finish = copy.finish + 2
-                        end
-                    end
-                    d.spans[#d.spans + 1] = copy
+                    d.spans[#d.spans + 1] = s
                 end
-                if active then
+            end
+            local first = d.rows[selected]
+            if first then
+                for row = first, first + 2 do
                     d.spans[#d.spans + 1] =
                         { row = row - 1, start = 0, finish = -1, hl = "TodoDailySelected", whole = true }
                 end
@@ -241,21 +221,34 @@ function M.tasks(ctl, svc, selected, width, readonly)
         { keys.label("edit_note"), L("Edit", "编辑") },
     })
     d:line("")
+    local function bar_parts(parts, left_group, right_group)
+        local out = { { "▌ ", left_group } }
+        local used = 2
+        for _, part in ipairs(parts) do
+            out[#out + 1] = part
+            used = used + vim.fn.strdisplaywidth(tostring(part[1] or ""))
+        end
+        if right_group then
+            local padding = math.max(1, width - used - 1)
+            out[#out + 1] = { string.rep(" ", padding) .. "▐", right_group }
+        end
+        return out
+    end
     for i, e in ipairs(ctl.state.queue) do
         if not e.missing then
             local task = svc.store:get(e.task_id)
             local included = e.selected == true
-            local focused = not cache and i == selected
+            local focused = i == selected
             local textgroup = included and "TodoDailyLabel" or "TodoDailyExcluded"
             local mark = require("todo.ui.task_mark")
             local priority_group = task and mark.priority_group(task)
                 or (included and "TodoPriorityBadge3" or "TodoDailyExcluded")
             local due_group = task and mark.due_group(task) or "TodoDailyMuted"
-            local left_group = included and "TodoBarAI" or "TodoBarActive"
+            local top_left_group = included and "TodoBarAI" or "TodoBarActive"
+            local rest_left_group = "TodoBarActive"
             local right_group = task and mark.right_group(task) or nil
             d.rows[i] = #d.lines + 1
-            d:line({
-                { included and "▌ " or "▏ ", left_group },
+            d:line(bar_parts({
                 { e.locked and "◆ " or "  ", "TodoDailyLock" },
                 { included and "[x] " or "[ ] ", included and "TodoDailyIncluded" or "TodoDailyExcluded" },
                 {
@@ -263,19 +256,17 @@ function M.tasks(ctl, svc, selected, width, readonly)
                     priority_group,
                 },
                 { task and task.title or e.title, textgroup },
-                { right_group and " ▐" or "", right_group or "TodoDailyMuted" },
-            }, focused and "TodoDailySelected" or nil)
+            }, top_left_group, right_group), focused and "TodoDailySelected" or nil)
             if task then
                 local state, due, urgency = metadata(task)
-                d:line({
-                    { "        " .. state .. "  ·  ", textgroup },
+                d:line(bar_parts({
+                    { "  " .. state .. "  ·  ", textgroup },
                     {
                         due,
                         not included and "TodoDailyExcluded"
                             or due_group,
                     },
-                    { right_group and " ▐" or "", right_group or "TodoDailyMuted" },
-                }, focused and "TodoDailySelected" or nil)
+                }, rest_left_group, right_group), focused and "TodoDailySelected" or nil)
                 local tags = {}
                 for _, t in ipairs(task.tags or {}) do
                     tags[#tags + 1] = "#" .. t
@@ -284,25 +275,27 @@ function M.tasks(ctl, svc, selected, width, readonly)
                 if summary == "" then
                     summary = L("No description · clarify the goal first", "暂无描述 · 先澄清任务目标")
                 end
-                d:line({
+                d:line(bar_parts({
                     {
-                        "        " .. table.concat(tags, " ") .. (#tags > 0 and "  ·  " or ""),
+                        "  " .. table.concat(tags, " ") .. (#tags > 0 and "  ·  " or ""),
                         included and "TodoDailyAccent" or "TodoDailyExcluded",
                     },
                     { summary, included and "TodoDailyMuted" or "TodoDailyExcluded" },
-                }, focused and "TodoDailySelected" or nil)
+                }, rest_left_group, right_group), focused and "TodoDailySelected" or nil)
             end
             d:line("")
         end
     end
     if cache then
-        cache.card_key, cache.card_doc, cache.card_selected = key, d, nil
-        cache.card_spans = {}
+        cache.card_key, cache.card_doc, cache.card_selected = key, d, selected
+        cache.card_base_spans = {}
         for row = 1, #d.lines do
-            cache.card_spans[row] = {}
+            cache.card_base_spans[row] = {}
         end
         for _, s in ipairs(d.spans) do
-            table.insert(cache.card_spans[s.row + 1], s)
+            if not (s.whole and s.hl == "TodoDailySelected") then
+                table.insert(cache.card_base_spans[s.row + 1], s)
+            end
         end
         return M.tasks(ctl, svc, selected, width, readonly)
     end

@@ -13,6 +13,8 @@ local kinds = {
     usage = true,
     profile = true,
     attachment = true,
+    routine = true,
+    routine_run = true,
 }
 local function rows(db, sql, args)
     local r = db:eval(sql, args)

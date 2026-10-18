@@ -941,7 +941,18 @@ function M.open(task, on_save, opts)
     end
     owner.layout:mount()
     require("todo.ui.responsive").watch(owner, reflow)
-    set_lines(components.header, { "  " .. i18n.t(task.id and "notice" or "notice_new") })
+    set_lines(components.header, {
+        "  "
+            .. (
+                opts.routine
+                    and (
+                        require("todo.config").get().language == "zh-CN"
+                            and (task.id and "循环任务" or "新建循环任务")
+                            or (task.id and "Routine" or "New routine")
+                    )
+                    or i18n.t(task.id and "notice" or "notice_new")
+            ),
+    })
     set_lines(components.description, vim.split(fields.description, "\n", { plain = true }), true)
     render_footer()
     render_recurrence()

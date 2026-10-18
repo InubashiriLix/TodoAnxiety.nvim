@@ -164,10 +164,12 @@ function M:context(s)
     local tasks, revisions = {}, {}
     for _, t in ipairs(self.service.store:list({ archived = false })) do
         if
-            ((s.scope == "clarify" or s.scope == "daily_item") and t.sync_uuid == (s.task_uuid or s.subject_uuid))
+            ((s.scope == "clarify" or s.scope == "daily_item" or s.scope == "update") and t.sync_uuid == (s.task_uuid or s.subject_uuid))
             or (
                 s.scope ~= "clarify"
                 and s.scope ~= "daily_item"
+                and s.scope ~= "update"
+                and s.scope ~= "capture"
                 and t.kind ~= "notice"
                 and (t.status == "todo" or t.status == "in_progress")
                 and (not s.candidate_uuids or s.candidate_uuids[t.sync_uuid])
@@ -563,6 +565,12 @@ Every response may include summary (rolling summary of facts and decisions, not 
             end
             if opts.system_tail then
                 system = system .. "\n" .. opts.system_tail
+            end
+            if session.scope == "capture" then
+                system = system
+                    .. "\nCAPTURE MODE: The user is describing a new item in natural language, possibly incomplete. Ask only enough questions to make it actionable. Then finish with action=draft and changes containing task_create (title, description, priority, deadline, reminder_interval) and optionally plan_add. Do not write anything yourself; the host will show a review card. Preserve the user's intent and explicitly list assumptions."
+            elseif session.scope == "update" then
+                system = system .. "\nUPDATE MODE: The current task has changed or was completed. Compare the user's message with the full current task, notes and plan item. Ask only about real ambiguity. Then finish with action=draft proposing task_update (status/deadline/priority), description, note and plan_update as appropriate. Never erase history or invent completion."
             end
             local counters = "Extended mode: "
                 .. tostring(session.extended)

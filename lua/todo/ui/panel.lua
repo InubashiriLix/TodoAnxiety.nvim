@@ -302,7 +302,17 @@ local function list_content(width)
                 relative = relative,
                 plan_state = plan_state,
                 ai_selected = marks.ai[task.sync_uuid] == true,
+                bars = false,
             })
+            info = info
+                or {
+                    left_group = nil,
+                    right_group = nil,
+                    priority_group = "TodoMuted",
+                    due_text = nil,
+                    done = mark.done(task),
+                    badge = string.format("[P%d]", task.priority or 3),
+                }
             if task.planning then
                 line2 = string.format(
                     "%dm %s · %s",
@@ -310,49 +320,54 @@ local function list_content(width)
                     task.planning.locked and "[locked]" or "",
                     task.planning.next_action or ""
                 )
-                if info and not info.done then
-                    line2 = viewmodel.truncate(line2, math.max(1, width - 3 - #indent - 2)) .. " ▐"
-                end
+            end
+            local base_prefix = indent
+            local bar_prefix = base_prefix .. (info.left_group and "▌ " or "  ")
+            local right_bar = info.right_group and "▐" or ""
+            local function bar_line(content)
+                local reserve = right_bar ~= "" and 1 or 0
+                local available = math.max(1, width - vim.fn.strdisplaywidth(bar_prefix) - reserve)
+                local text = viewmodel.truncate(content or "", available)
+                local padding = width
+                    - vim.fn.strdisplaywidth(bar_prefix)
+                    - vim.fn.strdisplaywidth(text)
+                    - reserve
+                return bar_prefix .. text .. string.rep(" ", math.max(0, padding)) .. right_bar
             end
             local first = #lines + 1
-            lines[#lines + 1] = " " .. indent .. line1
-            lines[#lines + 1] = " " .. indent .. line2
-            lines[#lines + 1] = ""
+            lines[#lines + 1] = bar_line(line1)
+            lines[#lines + 1] = bar_line(line2)
+            lines[#lines + 1] = bar_line("")
             mappings[first] = row
             mappings[first + 1] = row
+            mappings[first + 2] = row
             order[#order + 1] = task
             local line1_text = lines[first]
             local line2_text = lines[first + 1]
-            if info and info.left_group then
-                decorations[#decorations + 1] = {
-                    line = first - 1,
-                    from = #indent + 1,
-                    to = #indent + 1 + #"▎",
-                    group = info.left_group,
-                }
-            end
-            if info and info.ai_group then
-                local ai_start = line1_text:find("■", 1, true)
-                if ai_start then
-                    decorations[#decorations + 1] = {
-                        line = first - 1,
-                        from = ai_start - 1,
-                        to = ai_start - 1 + #"■",
-                        group = info.ai_group,
-                    }
+            if info.left_group or info.ai_group then
+                for row = 0, 2 do
+                    local group = row == 0 and (info.ai_group or info.left_group) or info.left_group
+                    if group then
+                        decorations[#decorations + 1] = {
+                            line = first - 1 + row,
+                            from = #base_prefix,
+                            to = #base_prefix + #"▌",
+                            group = group,
+                        }
+                    end
                 end
             end
-            local badge = info and info.badge or string.format("[P%d]", task.priority)
+            local badge = info.badge or string.format("[P%d]", task.priority)
             local badge_start = line1_text:find(badge, 1, true)
             if badge_start then
                 decorations[#decorations + 1] = {
                     line = first - 1,
                     from = badge_start - 1,
                     to = badge_start - 1 + #badge,
-                    group = (info and info.priority_group) or ("TodoPriority" .. task.priority),
+                    group = info.priority_group or ("TodoPriority" .. task.priority),
                 }
             end
-            if info and info.due_text and info.due_text ~= "" then
+            if info.due_text and info.due_text ~= "" then
                 local due_start = line2_text:find(info.due_text, 1, true)
                 if due_start then
                     decorations[#decorations + 1] = {
@@ -363,8 +378,8 @@ local function list_content(width)
                     }
                 end
             end
-            if info and info.right_group then
-                for _, line_index in ipairs({ first, first + 1 }) do
+            if info.right_group then
+                for _, line_index in ipairs({ first, first + 1, first + 2 }) do
                     local text = lines[line_index]
                     local right_start = text:find("▐", 1, true)
                     if right_start then
@@ -631,6 +646,124 @@ local function planner_action(action, role)
     end
 end
 
+local function today_tasks(motion, count)
+    local function tasks_from(direction, limit)
+        local result = {}
+        local index = state.cursor_row
+        while index >= 1 and index <= #state.rows and #result < limit do
+            local row = state.rows[index]
+            if row.kind == "task" then
+                result[#result + 1] = row.task
+            end
+            index = index + direction
+        end
+        return result
+    end
+    local function tasks_between(first, last)
+        local result = {}
+        for index = math.min(first, last), math.max(first, last) do
+            local row = state.rows[index]
+            if row.kind == "task" then
+                result[#result + 1] = row.task
+            end
+        end
+        return result
+    end
+    if motion == "top" then
+        return tasks_between(1, state.cursor_row)
+    elseif motion == "bottom" then
+        return tasks_between(state.cursor_row, #state.rows)
+    elseif motion == "down" then
+        return tasks_from(1, count or 2)
+    elseif motion == "up" then
+        return tasks_from(-1, count or 2)
+    end
+    return {}
+end
+
+local function today_apply(motion, count, role)
+    if motion == "single" then
+        local row = current_row()
+        if row and row.kind == "task" then
+            planner_action("toggle_today", role)
+        end
+        return
+    end
+    local tasks = today_tasks(motion, count)
+    if #tasks == 0 then
+        return
+    end
+    local svc = service()
+    local ws = require("todo.workspace").new(svc.store)
+    local planner = require("todo.planning").new(ws, svc)
+    local date = state.view == "today" and display_planner():today().date or display_planner():date()
+    local plan = planner:today(date)
+    local present = {}
+    local all_present = true
+    for _, task in ipairs(tasks) do
+        for _, item in ipairs(plan.items) do
+            if item.task_uuid == task.sync_uuid then
+                present[task.sync_uuid] = true
+            end
+        end
+        if not present[task.sync_uuid] then
+            all_present = false
+        end
+    end
+    local ok, err = pcall(function()
+        planner:transaction(all_present and "Remove today range" or "Add today range", function()
+            for _, task in ipairs(tasks) do
+                if task.kind ~= "notice" and not task.archived_at and (task.status == "todo" or task.status == "in_progress") then
+                    if all_present then
+                        if present[task.sync_uuid] then
+                            planner:change(date, task.sync_uuid, false)
+                        end
+                    elseif not present[task.sync_uuid] then
+                        planner:add(task.sync_uuid, date)
+                    end
+                end
+            end
+        end)
+    end)
+    if not ok then
+        vim.notify(tostring(err), vim.log.levels.WARN)
+        return
+    end
+    render()
+    vim.api.nvim_echo(
+        { { string.format(L("TODAY: %d task(s) marked", "今日标记：%d 个任务"), #tasks), "WarningMsg" } },
+        false,
+        {}
+    )
+end
+
+local function map_today_range(buf, role, opts)
+    vim.keymap.set("n", "T", function()
+        vim.api.nvim_echo(
+            { { L("T: range mark (Tj/Tk/T3j/Tgg/TG)", "T：范围标记（Tj/Tk/T3j/Tgg/TG）"), "WarningMsg" } },
+            false,
+            {}
+        )
+    end, opts)
+    for _, spec in ipairs({
+        { "Tj", "down", 2 },
+        { "Tk", "up", 2 },
+        { "Tgg", "top", nil },
+        { "TG", "bottom", nil },
+    }) do
+        vim.keymap.set("n", spec[1], function()
+            today_apply(spec[2], spec[3], role)
+        end, opts)
+    end
+    for count = 1, 9 do
+        for _, direction in ipairs({ "j", "k" }) do
+            vim.keymap.set("n", "T" .. count .. direction, function()
+                today_apply(direction == "j" and "down" or "up", count, role)
+            end, opts)
+        end
+    end
+end
+
 local function context_task(role)
     if role == "detail" or role == "overlay" then
         return selected_task()
@@ -653,8 +786,7 @@ local function panel_context(role)
     if context_task(role) then
         add("Q", "Clarify task with AI", "AI 澄清任务", page)
         local task = context_task(role)
-        local item, date = planning_membership(task, true)
-        local today = service().store.db and display_planner():date() or os.date("%Y-%m-%d")
+        local item = planning_membership(task, true)
         if
             item
             or (
@@ -666,9 +798,10 @@ local function panel_context(role)
             add(
                 "t",
                 item and "Remove from plan" or "Add to plan",
-                (item and "移出" or "加入") .. (date == today and "今日" or date:sub(6)),
+                item and "移出计划" or "加入计划",
                 page
             )
+            add("T / Tj / T3j / Tgg / TG", "Mark today range", "今日范围内标记", page)
         end
         add("N", "Add note", "添加备注", page)
     end
@@ -1908,6 +2041,7 @@ local function open_details()
         end, { buffer = overlay.bufnr, silent = true })
     end
     contextual_keys(overlay.bufnr, "overlay")
+    map_today_range(overlay.bufnr, "overlay", { buffer = overlay.bufnr, silent = true, desc = "Mark today range" })
     set_detail_navigation(overlay.bufnr)
     guard_navigation(overlay.bufnr)
     vim.keymap.set("n", "+", function()
@@ -1929,7 +2063,7 @@ local function set_mappings(component, role)
             planner_action(action, role)
         end, opts("Planning: " .. action))
     end
-    for key, action in pairs({ T = "remove", L = "lock", J = "down", K = "up", m = "item", C = "capacity", b = "date" }) do
+    for key, action in pairs({ L = "lock", J = "down", K = "up", m = "item", C = "capacity", b = "date" }) do
         vim.keymap.set("n", key, function()
             if state.view == "today" then
                 planner_action(action, role)
@@ -2087,6 +2221,7 @@ local function set_mappings(component, role)
         end
     end
     contextual_keys(buf, role)
+    map_today_range(buf, role, opts("Mark today range"))
     if role == "detail" then
         for _, key in ipairs({ "<Tab>", "za", "zM", "zR" }) do
             pcall(vim.keymap.del, "n", key, { buffer = buf })

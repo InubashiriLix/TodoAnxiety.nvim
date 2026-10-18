@@ -120,6 +120,9 @@ local function wait()
     )
 end
 ctl.state.intent = "Spend the morning on activation"
+for _, entry in ipairs(ctl.state.queue) do
+    entry.selected = true
+end
 ctl.state.locks_confirmed = true
 assert(ctl:prepare())
 ctl:start()

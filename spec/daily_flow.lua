@@ -32,6 +32,7 @@ local today_ctl = daily.new(ws, svc, ai, today, { view = "today" })
 local uuids = {}
 for _, entry in ipairs(today_ctl.state.queue) do
     uuids[entry.uuid] = true
+    assert(entry.selected == false, "AI planning must start with nothing selected")
 end
 assert(uuids[a.sync_uuid] and uuids[b.sync_uuid], "today scope must include today's plan and yesterday leftovers")
 assert(not uuids[c.sync_uuid], "today scope must not include every active task")

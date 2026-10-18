@@ -61,6 +61,11 @@ local function review(s)
     }
 end
 local function prepare(ctl)
+    for _, entry in ipairs(ctl.state.queue) do
+        if not entry.missing then
+            entry.selected = true
+        end
+    end
     ctl.state.locks_confirmed = true
     assert(ctl:prepare())
 end
@@ -173,6 +178,7 @@ local task = lsvc.store:list({ archived = false })[1]
 lock.planner:add(task.sync_uuid, lock.date)
 lock.planner:change(lock.date, task.sync_uuid, { minutes = 480, locked = true })
 lock.state.queue[1].locked = true
+lock.state.queue[1].selected = true
 lock.state.locks_confirmed = true
 local ready, err = lock:prepare()
 assert(not ready and err and #lcalls == 0, "full locks block before paid requests")

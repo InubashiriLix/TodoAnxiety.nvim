@@ -82,6 +82,9 @@ local function done(status)
     assert(ctl.state.status == status, ctl.state.last_error or ctl.state.status)
     vim.wait(70)
 end
+press("<Space>")
+press("j")
+press("<Space>")
 press("<CR>w")
 done("awaiting")
 local round = ctl.cache.rounds[ctl:item_id(ctl:current())]

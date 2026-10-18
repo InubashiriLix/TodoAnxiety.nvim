@@ -16,7 +16,7 @@ local line1, line2, info = viewmodel.card(overdue, 80, "overdue", {
     plan_state = "today",
     ai_selected = true,
 })
-assert(line1:find("▎", 1, true) and line1:find("■", 1, true) and line1:find("▐", 1, true))
+assert(line1:find("▎", 1, true) and not line1:find("■", 1, true) and line1:find("▐", 1, true))
 assert(line2:find("▐", 1, true))
 assert(info.left_group == "TodoBarToday" and info.ai_group == "TodoBarAI")
 assert(info.priority_group == "TodoPriorityBadge0" and info.right_group == "TodoBarOverdue")

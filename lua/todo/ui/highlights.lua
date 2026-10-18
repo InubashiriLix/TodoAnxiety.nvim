@@ -37,24 +37,24 @@ local links = {
 -- Card bars and badges are intentionally concrete rather than links: a
 -- background priority badge cannot be represented by a simple highlight link.
 local card = {
-    TodoBarToday = { fg = 0x8fbf6f, bold = true },
-    TodoBarReview = { fg = 0xe0af68, bold = true },
-    TodoBarActive = { fg = 0x5c6370 },
-    TodoBarAI = { fg = 0xb48ead, bold = true },
-    TodoBarOverdue = { fg = 0xe06c75, bold = true },
-    TodoBarUrgent = { fg = 0xe5a15f, bold = true },
-    TodoBarHigh = { fg = 0xd7c06a },
-    TodoBarAttention = { fg = 0x61afef },
-    TodoBarNone = { fg = 0x5c6370 },
+    TodoBarToday = { fg = 0x00e676, bold = true },
+    TodoBarReview = { fg = 0xffb300, bold = true },
+    TodoBarActive = { fg = 0x8b949e, bold = true },
+    TodoBarAI = { fg = 0xff4fd8, bold = true },
+    TodoBarOverdue = { fg = 0xff1744, bold = true },
+    TodoBarUrgent = { fg = 0xff9100, bold = true },
+    TodoBarHigh = { fg = 0xffd600, bold = true },
+    TodoBarAttention = { fg = 0x00b0ff, bold = true },
+    TodoBarNone = { fg = 0x78909c, bold = true },
     TodoPriorityBadge0 = { fg = 0x000000, bg = 0xe06c75, bold = true },
     TodoPriorityBadge1 = { fg = 0x000000, bg = 0xe5a15f, bold = true },
     TodoPriorityBadge2 = { fg = 0x000000, bg = 0x61afef, bold = true },
     TodoPriorityBadge3 = { fg = 0x9aa0aa, bg = 0x2c313a },
-    TodoDueOverdue = { fg = 0xe06c75, bold = true },
-    TodoDueToday = { fg = 0xe5a15f, bold = true },
-    TodoDueSoon = { fg = 0xd7c06a },
-    TodoDueLater = { fg = 0x61afef },
-    TodoDueNone = { fg = 0x5c6370 },
+    TodoDueOverdue = { fg = 0xff1744, bold = true },
+    TodoDueToday = { fg = 0xff9100, bold = true },
+    TodoDueSoon = { fg = 0xffd600, bold = true },
+    TodoDueLater = { fg = 0x00b0ff },
+    TodoDueNone = { fg = 0x78909c },
 }
 
 local function fg_of(group)

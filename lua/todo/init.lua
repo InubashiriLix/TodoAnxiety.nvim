@@ -253,8 +253,14 @@ function M._service()
     assert(core_ok, core_error)
     local Store = require("todo.store")
     store_instance = Store.open(config.get().db_path)
-    require("todo.workspace").new(store_instance)
+    local workspace = require("todo.workspace").new(store_instance)
     service_instance = require("todo.service").new(store_instance)
+    vim.schedule(function()
+        if service_instance == nil or store_instance == nil then
+            return
+        end
+        pcall(require("todo.routines").run, workspace, service_instance)
+    end)
     return service_instance
 end
 
@@ -367,6 +373,38 @@ function M.plan(opts)
         end
     end)
     return result
+end
+function M.routines()
+    require("todo.routines").manage()
+end
+function M.capture(text)
+    if not text or vim.trim(text) == "" then
+        vim.ui.input({
+            prompt = require("todo.config").get().language == "zh-CN" and "要记录什么？" or "What do you want to capture? ",
+        }, function(value)
+            if value and vim.trim(value) ~= "" then
+                M.capture(value)
+            end
+        end)
+        return
+    end
+    require("todo.ui.ai_setup").ensure(function(ok)
+        if ok then
+            require("todo.ui.planner").chat({ scope = "capture", extended = true, initial = text })
+        end
+    end)
+end
+function M.revise(id)
+    local task_id = id or (require("todo.ui.panel").current_task() or {}).id
+    if not task_id then
+        vim.notify("Select a task first", vim.log.levels.WARN)
+        return
+    end
+    require("todo.ui.ai_setup").ensure(function(ok)
+        if ok then
+            require("todo.ui.planner").chat({ task_id = task_id, scope = "update", extended = true })
+        end
+    end)
 end
 function M.clarify(id)
     require("todo.ui.planner").sessions({ task_id = id })

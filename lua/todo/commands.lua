@@ -67,6 +67,12 @@ function M.run(args)
             require("todo.diagnostics").open()
         elseif command == "today" then
             todo.today(rest)
+        elseif command == "routines" then
+            todo.routines()
+        elseif command == "capture" then
+            todo.capture(rest)
+        elseif command == "revise" then
+            todo.revise(tonumber(rest))
         elseif command == "plan" then
             todo.plan(rest ~= "" and { date = rest } or nil)
         elseif command == "clarify" then
@@ -132,6 +138,9 @@ function M.complete(arglead, cmdline)
     if not command then
         local commands = {
             "today",
+            "routines",
+            "capture",
+            "revise",
             "plan",
             "clarify",
             "ai",

@@ -37,6 +37,7 @@ local ai = require("todo.ai").new(ws, svc, {
     end,
 })
 local ctl = require("todo.ai.daily").new(ws, svc, ai, "2026-10-16")
+ctl.state.queue[1].selected = true
 ctl.state.locks_confirmed = true
 assert(ctl:prepare())
 ctl:start()

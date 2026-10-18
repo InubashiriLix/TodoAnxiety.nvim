@@ -82,6 +82,7 @@ assert(title(o.questions):find("Tasks", 1, true))
 vim.wait(60) -- Focus-dependent hints settle after WinEnter.
 assert(footer(o):find("Confirm fixed items", 1, true))
 assert(not footer(o):find("Add note", 1, true), "preparation edits the task, not an answer")
+press("<Space>")
 press("<CR>")
 press("w")
 assert(
