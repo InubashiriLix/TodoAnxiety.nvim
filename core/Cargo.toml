@@ -1,0 +1,22 @@
+[package]
+name = "todo-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "TodoAnxiety.nvim local Rust core (msgpack-rpc)"
+license = "MIT"
+
+[[bin]]
+name = "todo-core"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dependencies]
+rmpv = "1.3"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

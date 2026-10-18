@@ -7,8 +7,11 @@ require("todo.config").setup({
 })
 local todo = require("todo")
 local svc = todo._service()
-assert(svc:create({ title = "Activation", description = "Activate the service." }))
-assert(svc:create({ title = "Second activation", description = "Activate the service." }))
+local first = assert(svc:create({ title = "Activation", description = "Activate the service." }))
+local second = assert(svc:create({ title = "Second activation", description = "Activate the service." }))
+local planner = require("todo.planning").new(svc.store.workspace, svc)
+planner:add(first.sync_uuid)
+planner:add(second.sync_uuid)
 local calls = 0
 local ai = require("todo.ai").new(svc.store.workspace, svc, {
     transport = function(opts, cb)
@@ -26,7 +29,7 @@ local ai = require("todo.ai").new(svc.store.workspace, svc, {
                     action = "question",
                     message = "When?",
                     questions = {
-                        { id = "q", question = "When to check?", options = { { id = "a", label = "Waiting" } } },
+                        { id = "q", question = "When to check?", options = { { id = "a", label = "Waiting" }, { id = "b", label = "Actively following up" }, { id = "c", label = "Blocked" } } },
                     },
                 }
             elseif context.reviews then
@@ -81,10 +84,9 @@ local function done(status)
 end
 press("<CR>w")
 done("awaiting")
-press("e")
-vim.cmd("stopinsert")
-vim.api.nvim_buf_set_lines(o.composer.bufnr, 0, -1, false, { "Check each morning and evening." })
-press("<CR>w<CR>")
+local round = ctl.cache.rounds[ctl:item_id(ctl:current())]
+round.answers.q = { selected = { a = true }, notes = { a = "Check each morning and evening." } }
+ctl:submit(nil, round)
 done("paused")
 assert(calls == 2 and ctl.state.last_error)
 ui.close()

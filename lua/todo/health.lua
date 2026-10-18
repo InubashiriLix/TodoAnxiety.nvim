@@ -133,6 +133,24 @@ function M.check()
     end
 
     vim.health.start("todo.nvim AI and attachments (local checks only)")
+    local core = require("todo.core")
+    pcall(core.start)
+    local core_ok, core_status = pcall(core.status)
+    if core_ok and core_status.running then
+        vim.health.ok(
+            "Rust core "
+                .. tostring(core_status.info and core_status.info.version or "?")
+                .. " (protocol "
+                .. tostring(core_status.info and core_status.info.protocol or "?")
+                .. ")"
+        )
+    else
+        vim.health.error(
+            "Rust core is not running: "
+                .. tostring(core.binary() or "binary not found")
+                .. "; build core/ or set core.bin"
+        )
+    end
     if cfg.ai.enabled then
         if vim.fn.executable("curl") == 1 then
             vim.health.ok("curl is available for asynchronous AI requests")
@@ -156,7 +174,7 @@ function M.check()
         if valid and key then
             vim.health.ok("AI key configured: " .. source)
         else
-            vim.health.warn("AI key missing; use :Todo ai key")
+            vim.health.warn("AI key missing; run :Todo ai setup")
         end
         vim.health.info(
             "Question limit "

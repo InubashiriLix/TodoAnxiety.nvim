@@ -74,6 +74,8 @@ function M.run(args)
         elseif command == "ai" then
             if rest == "memory" then
                 require("todo.ui.planner").memory()
+            elseif rest == "setup" then
+                require("todo.ui.ai_setup").open()
             elseif rest == "key" then
                 require("todo.credentials").prompt()
             elseif rest == "settings" then
@@ -171,7 +173,7 @@ function M.complete(arglead, cmdline)
     elseif command == "ai" then
         return vim.tbl_filter(function(item)
             return vim.startswith(item, arglead)
-        end, { "settings", "key", "usage", "balance", "memory" })
+        end, { "setup", "settings", "key", "usage", "balance", "memory" })
     elseif command == "toggle" then
         return vim.tbl_filter(function(item)
             return vim.startswith(item, arglead)

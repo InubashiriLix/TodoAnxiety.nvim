@@ -269,6 +269,19 @@ local function list_content(width)
     local lines, mappings, order, decorations = {}, {}, {}, {}
     local relative = state.view == "by_time"
     local rows = state.rows
+    local marks = { today = {}, review = {}, ai = {} }
+    local marked, value = pcall(function()
+        local svc = service()
+        if not svc.store.db then
+            return { today = {}, review = {}, ai = {} }
+        end
+        local ws = require("todo.workspace").new(svc.store)
+        local date = state.view == "today" and display_planner():today().date or display_planner():date()
+        return require("todo.ui.task_mark").marks(ws, svc, date, state.view)
+    end)
+    if marked then
+        marks = value
+    end
     for index, row in ipairs(rows) do
         if row.kind == "section" then
             local marker = row.collapsed and "▸" or "▾"
@@ -283,8 +296,13 @@ local function list_content(width)
             local task = row.task
             local indent = string.rep("  ", row.depth)
             local reason, reason_group = urgency_label(task)
-            local line1, line2 =
-                viewmodel.card(task, math.max(10, width - 3 - #indent), reason, { relative = relative })
+            local mark = require("todo.ui.task_mark")
+            local plan_state = mark.plan_state(task, marks)
+            local line1, line2, info = viewmodel.card(task, math.max(10, width - 3 - #indent), reason, {
+                relative = relative,
+                plan_state = plan_state,
+                ai_selected = marks.ai[task.sync_uuid] == true,
+            })
             if task.planning then
                 line2 = string.format(
                     "%dm %s · %s",
@@ -292,6 +310,9 @@ local function list_content(width)
                     task.planning.locked and "[locked]" or "",
                     task.planning.next_action or ""
                 )
+                if info and not info.done then
+                    line2 = viewmodel.truncate(line2, math.max(1, width - 3 - #indent - 2)) .. " ▐"
+                end
             end
             local first = #lines + 1
             lines[#lines + 1] = " " .. indent .. line1
@@ -300,18 +321,64 @@ local function list_content(width)
             mappings[first] = row
             mappings[first + 1] = row
             order[#order + 1] = task
-            local badge = string.format("[P%d]", task.priority)
-            local badge_start = lines[first]:find(badge, 1, true)
+            local line1_text = lines[first]
+            local line2_text = lines[first + 1]
+            if info and info.left_group then
+                decorations[#decorations + 1] = {
+                    line = first - 1,
+                    from = #indent + 1,
+                    to = #indent + 1 + #"▎",
+                    group = info.left_group,
+                }
+            end
+            if info and info.ai_group then
+                local ai_start = line1_text:find("■", 1, true)
+                if ai_start then
+                    decorations[#decorations + 1] = {
+                        line = first - 1,
+                        from = ai_start - 1,
+                        to = ai_start - 1 + #"■",
+                        group = info.ai_group,
+                    }
+                end
+            end
+            local badge = info and info.badge or string.format("[P%d]", task.priority)
+            local badge_start = line1_text:find(badge, 1, true)
             if badge_start then
                 decorations[#decorations + 1] = {
                     line = first - 1,
                     from = badge_start - 1,
                     to = badge_start - 1 + #badge,
-                    group = "TodoPriority" .. task.priority,
+                    group = (info and info.priority_group) or ("TodoPriority" .. task.priority),
                 }
             end
+            if info and info.due_text and info.due_text ~= "" then
+                local due_start = line2_text:find(info.due_text, 1, true)
+                if due_start then
+                    decorations[#decorations + 1] = {
+                        line = first,
+                        from = due_start - 1,
+                        to = due_start - 1 + #info.due_text,
+                        group = info.due_group,
+                    }
+                end
+            end
+            if info and info.right_group then
+                for _, line_index in ipairs({ first, first + 1 }) do
+                    local text = lines[line_index]
+                    local right_start = text:find("▐", 1, true)
+                    if right_start then
+                        decorations[#decorations + 1] = {
+                            line = line_index - 1,
+                            from = right_start - 1,
+                            to = right_start - 1 + #"▐",
+                            group = info.right_group,
+                        }
+                    end
+                end
+            end
             if reason_group and reason then
-                local reason_start = lines[first + 1]:find(reason, 1, true)
+                local reason_start = line2_text:find(reason, 1, true)
                 if reason_start then
                     decorations[#decorations + 1] = {
                         line = first,
@@ -323,7 +390,7 @@ local function list_content(width)
             end
             for _, tag in ipairs(task.tags or {}) do
                 local marker = "#" .. tag
-                local tag_start = lines[first + 1]:find(marker, 1, true)
+                local tag_start = line2_text:find(marker, 1, true)
                 if tag_start then
                     decorations[#decorations + 1] = {
                         line = first,
@@ -400,7 +467,18 @@ local function planner_action(action, role)
             task = row and row.kind == "task" and row.task or nil
         end
         if action == "plan" then
-            require("todo").plan(state.view == "today" and { date = planner:today().date } or nil)
+            local scope = {}
+            for _, task in ipairs(state.tasks or {}) do
+                if task.kind ~= "notice" and (task.status == "todo" or task.status == "in_progress") then
+                    scope[#scope + 1] = task.sync_uuid
+                end
+            end
+            require("todo").plan({
+                date = state.view == "today" and planner:today().date or nil,
+                view = state.view,
+                filters = vim.deepcopy(state.filters or {}),
+                task_uuids = state.view == "today" and nil or scope,
+            })
             return
         end
         if action == "capacity" then
@@ -1933,6 +2011,7 @@ local function set_mappings(component, role)
     vim.keymap.set("n", "/", open_search, opts("Search tasks"))
     vim.keymap.set("n", "f", open_filter, opts("Filter tasks"))
     vim.keymap.set("n", "?", show_help, opts("Dashboard help"))
+    vim.keymap.set("n", "<C-p>", show_help, opts("Dashboard help"))
     vim.keymap.set("n", "g", function()
         require("todo").tags()
     end, opts("Manage tags"))
@@ -2104,7 +2183,7 @@ local function create_float(owner)
         if size.height >= 10 then
             local header = select(1, header_content(false, size.width))
             table.insert(boxes, 1, Layout.Box(owner.header, { size = math.min(4, math.max(2, #header)) }))
-            boxes[#boxes + 1] = Layout.Box(owner.footer, { size = 2 })
+            boxes[#boxes + 1] = Layout.Box(owner.footer, { size = 3 })
         end
         return { relative = "editor", position = "50%", size = size }, Layout.Box(boxes, { dir = "col" })
     end

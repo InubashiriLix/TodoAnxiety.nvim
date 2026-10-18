@@ -12,8 +12,12 @@ assert(not evidence.matches({}, { "text" }))
 local store = require("todo.store").open(vim.fn.tempname() .. ".db")
 local ws = require("todo.workspace").new(store)
 local svc = require("todo.service").new(store)
+local seed = {}
 for i = 1, 2 do
-    assert(svc:create({ title = "Service " .. i, description = "Activate service\nWait for payment confirmation." }))
+    local value = assert(
+        svc:create({ title = "Service " .. i, description = "Activate service\nWait for payment confirmation." })
+    )
+    seed[#seed + 1] = value.sync_uuid
 end
 local requests, failed, edited = {}, false, false
 local function result(snapshot, quote)
@@ -64,6 +68,8 @@ local ai = require("todo.ai").new(ws, svc, {
                         question = "When?",
                         options = {
                             { id = "wait", label = "Mostly waiting" },
+                            { id = "active", label = "Actively progressing" },
+                            { id = "blocked", label = "Blocked by someone else" },
                         },
                     },
                 },
@@ -104,7 +110,7 @@ local ai = require("todo.ai").new(ws, svc, {
         return { running = true, cancel = function() end }
     end,
 })
-local ctl = require("todo.ai.daily").new(ws, svc, ai, "2026-10-17")
+local ctl = require("todo.ai.daily").new(ws, svc, ai, "2026-10-17", { view = "active", task_uuids = seed })
 local function wait()
     assert(
         vim.wait(5000, function()
@@ -152,7 +158,7 @@ wait()
 assert(failed and ctl.state.status == "paused")
 -- Simulate reopening after failure, then editing and resubmitting the same round.
 package.loaded["todo.ai.daily"] = nil
-ctl = require("todo.ai.daily").new(ws, svc, ai, "2026-10-17")
+ctl = require("todo.ai.daily").new(ws, svc, ai, "2026-10-17", { view = "active", task_uuids = seed })
 round = ctl:item(second).round
 assert(round.status == "pending")
 round.answers.when.custom = "Updated follow-up at noon"

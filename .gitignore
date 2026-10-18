@@ -11,4 +11,5 @@ cache/
 
 # Rust dependency cache and build artifacts
 .cargo/
+core/target/
 server/target/

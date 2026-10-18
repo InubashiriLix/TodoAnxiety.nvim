@@ -23,6 +23,10 @@ jobs:
         with:
           neovim: true
           version: ${{ matrix.neovim }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build required Rust core
+        shell: bash
+        run: cargo build --manifest-path core/Cargo.toml
       - name: Install plugin dependencies
         shell: bash
         run: |

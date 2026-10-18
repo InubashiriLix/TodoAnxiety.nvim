@@ -268,6 +268,8 @@ function M.open(ai, id, surface, editor, completed)
             return
         end
         assert(not ai.active[id], "Request running")
+        local valid, missing = require("todo.ai.questions").validate(round)
+        assert(valid, missing)
         local latest = ai:resume(id)
         assert(
             latest.round and latest.round.id == round.id and latest.round.status == "pending",
@@ -345,6 +347,12 @@ function M.open(ai, id, surface, editor, completed)
         end
         if q.options[selected()] then
             pick()
+            if round.tab <= #round.questions then
+                round.tab = round.tab + 1
+            else
+                round.tab = #round.questions + 1
+            end
+            render()
             return
         end
         edit(true)

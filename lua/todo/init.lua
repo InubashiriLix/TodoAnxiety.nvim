@@ -52,6 +52,10 @@ local function close_store()
             store_instance:close()
         end)
     end
+    local core = package.loaded["todo.core"]
+    if core then
+        pcall(core.stop)
+    end
     store_instance, service_instance = nil, nil
 end
 
@@ -188,6 +192,8 @@ function M.setup(opts)
     local old_path = config.get().db_path
     local old_sync = vim.deepcopy(config.get().sync)
     local result = config.setup(opts)
+    local core_ok, core_error = require("todo.core").start()
+    assert(core_ok, core_error)
     if sync_handle and not vim.deep_equal(old_sync, result.sync) then
         sync_handle.cancel()
         sync_handle = nil
@@ -243,6 +249,8 @@ function M._service()
     if service_instance then
         return service_instance
     end
+    local core_ok, core_error = require("todo.core").start()
+    assert(core_ok, core_error)
     local Store = require("todo.store")
     store_instance = Store.open(config.get().db_path)
     require("todo.workspace").new(store_instance)
@@ -352,7 +360,13 @@ function M.today(date)
     M.open({ view = "today" })
 end
 function M.plan(opts)
-    return require("todo.ui.daily").open(opts)
+    local result
+    require("todo.ui.ai_setup").ensure(function(ok)
+        if ok then
+            result = require("todo.ui.daily").open(opts)
+        end
+    end)
+    return result
 end
 function M.clarify(id)
     require("todo.ui.planner").sessions({ task_id = id })

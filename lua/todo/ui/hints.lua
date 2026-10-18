@@ -136,14 +136,9 @@ function M.lines(actions, width, max_lines)
     end
     return #lines > 0 and lines or { "F1/?" }
 end
--- Stable columns and two purpose-specific rows; the help page remains complete.
+-- Stable columns, up to three rows. The help page remains complete.
 function M.compact(actions, width)
     width = math.max(1, width)
-    local lookup = {}
-    for _, a in ipairs(actions) do
-        lookup[a.key] = a
-    end
-    local rows = { { "t", "s", "x", "p", "e", "U", "L", "A" }, { "Enter", "a / n", "/", "P", "v", "q" } }
     local short = {
         ["a / n"] = L("New", "新建"),
         ["U"] = L("Undo", "撤回"),
@@ -151,44 +146,49 @@ function M.compact(actions, width)
         ["P"] = L("Plan", "编排"),
         ["v"] = L("View", "视图"),
         ["q"] = L("Close", "关闭"),
+        ["t"] = L("Add plan", "加入计划"),
+        ["x"] = L("Done", "完成"),
+        ["e"] = L("Edit", "编辑"),
+        ["p"] = L("Postpone", "延期"),
+        ["?"] = L("Help", "帮助"),
     }
     local columns = math.max(1, math.min(6, math.floor(width / 16)))
     local cell = math.floor(width / columns)
-    local result = {}
-    for row, keys in ipairs(rows) do
-        local selected = {}
-        for _, key in ipairs(keys) do
-            if lookup[key] then
-                selected[#selected + 1] = lookup[key]
-            end
-        end
-        if row == 1 and #selected == 0 then
-            for _, a in ipairs(actions) do
-                if not a.key:find("Esc", 1, true) and not a.key:find("F1", 1, true) then
-                    selected[#selected + 1] = a
-                end
-            end
-        end
-        local cap = row == 2 and columns - 1 or columns
-        while #selected > cap do
-            table.remove(selected)
-        end
-        if row == 2 then
-            selected[#selected + 1] = { key = "F1", label = L("Help", "帮助") }
-        end
-        local line = ""
-        for index, a in ipairs(selected) do
+    local result, index = {}, 1
+    for _ = 1, 3 do
+        local line, count = "", 0
+        while index <= #actions and count < columns do
+            local a = actions[index]
+            index = index + 1
             local token = "[" .. a.key .. "] " .. (short[a.key] or a.label)
             while vim.fn.strdisplaywidth(token) > cell and vim.fn.strchars(token) > 1 do
                 token = vim.fn.strcharpart(token, 0, vim.fn.strchars(token) - 1)
             end
             line = line
                 .. token
-                .. (index < #selected and string.rep(" ", math.max(1, cell - vim.fn.strdisplaywidth(token))) or "")
+                .. (count + 1 < columns and string.rep(" ", math.max(1, cell - vim.fn.strdisplaywidth(token))) or "")
+            count = count + 1
         end
-        result[#result + 1] = line
+        if line ~= "" then
+            result[#result + 1] = line
+        end
     end
-    return result
+    if #result > 0 then
+        local last = result[#result]
+        if not last:find("F1", 1, true) and not last:find("[?]", 1, true) then
+            local token = "[F1] " .. L("Help", "帮助")
+            if vim.fn.strdisplaywidth(last .. " " .. token) <= width then
+                result[#result] = last .. " " .. token
+            elseif width >= 8 then
+                result[#result] = "[F1] Help"
+            elseif width >= 4 then
+                result[#result] = "[F1]"
+            else
+                result[#result] = "F1/?"
+            end
+        end
+    end
+    return #result > 0 and result or { "F1/?" }
 end
 function M.close(owner)
     if owner and owner.help then

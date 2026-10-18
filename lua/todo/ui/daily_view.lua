@@ -247,16 +247,23 @@ function M.tasks(ctl, svc, selected, width, readonly)
             local included = e.selected == true
             local focused = not cache and i == selected
             local textgroup = included and "TodoDailyLabel" or "TodoDailyExcluded"
+            local mark = require("todo.ui.task_mark")
+            local priority_group = task and mark.priority_group(task)
+                or (included and "TodoPriorityBadge3" or "TodoDailyExcluded")
+            local due_group = task and mark.due_group(task) or "TodoDailyMuted"
+            local left_group = included and "TodoBarAI" or "TodoBarActive"
+            local right_group = task and mark.right_group(task) or nil
             d.rows[i] = #d.lines + 1
             d:line({
-                { focused and "▎ " or "  ", "TodoDailyAccent" },
+                { included and "▌ " or "▏ ", left_group },
                 { e.locked and "◆ " or "  ", "TodoDailyLock" },
                 { included and "[x] " or "[ ] ", included and "TodoDailyIncluded" or "TodoDailyExcluded" },
                 {
                     "[P" .. (task and task.priority or e.priority or 3) .. "] ",
-                    included and "TodoPriority" .. (task and task.priority or e.priority or 3) or "TodoDailyExcluded",
+                    priority_group,
                 },
                 { task and task.title or e.title, textgroup },
+                { right_group and " ▐" or "", right_group or "TodoDailyMuted" },
             }, focused and "TodoDailySelected" or nil)
             if task then
                 local state, due, urgency = metadata(task)
@@ -265,9 +272,9 @@ function M.tasks(ctl, svc, selected, width, readonly)
                     {
                         due,
                         not included and "TodoDailyExcluded"
-                            or urgency.level == "overdue" and "TodoDailyOverdue"
-                            or "TodoDailyMuted",
+                            or due_group,
                     },
+                    { right_group and " ▐" or "", right_group or "TodoDailyMuted" },
                 }, focused and "TodoDailySelected" or nil)
                 local tags = {}
                 for _, t in ipairs(task.tags or {}) do
@@ -313,7 +320,7 @@ function M.questions(round, tab, option, width)
         local q = round.questions[i]
         local text = " " .. (q and q.header or L("Submit", "提交")) .. " "
         local a = q and round.answers[q.id]
-        local answered = a and ((a.custom and a.custom ~= "") or next(a.selected or {}))
+        local answered = q and require("todo.ai.questions").answered(round, q)
         if answered then
             text = " ✓" .. text
         end
@@ -369,13 +376,26 @@ function M.questions(round, tab, option, width)
     d:text(q.question, "TodoDailyLabel")
     d:line({
         {
-            "  " .. (q.multiple and L("Multiple choices", "可多选") or L("Single choice", "单选")) .. " · " .. L(
-                "Choose, then add detail below",
-                "选择后可在下方继续补充"
-            ),
+            "  " .. (q.multiple and L("Multiple choices", "可多选") or L("Single choice", "单选"))
+                .. " · "
+                .. #q.options
+                .. " "
+                .. L("options", "个选项")
+                .. " · "
+                .. L("Choose, then add detail below", "选择后可在下方继续补充"),
             "TodoDailyMuted",
         },
     })
+    if #q.options > 0 and (#q.options < 3 or #q.options > 5) then
+        d:text(
+            L(
+                "Options should be 3-5. Press T to ask AI for alternatives.",
+                "选项应为 3–5 个，可按 T 让 AI 重新整理。"
+            ),
+            "TodoDailyMuted",
+            "  "
+        )
+    end
     d:line("")
     local a = round.answers[q.id] or { selected = {}, notes = {} }
     for i, o in ipairs(q.options) do
@@ -502,7 +522,10 @@ function M.timeline(ctl, svc, selected, session, width, show_details, queue_open
         d:text(task and task.title or entry.title, "TodoDailyLabel")
         if task then
             local state, due = metadata(task)
-            d:line({ { "  " .. state .. "  ·  ", "TodoDailyMuted" }, { due, "TodoDailyLock" } })
+            d:line({
+                { "  " .. state .. "  ·  ", "TodoDailyMuted" },
+                { due, require("todo.ui.task_mark").due_group(task) },
+            })
             if ctl.state.status == "preparing" or queue_open or show_details then
                 d:line("")
                 d:text(

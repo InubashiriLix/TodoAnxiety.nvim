@@ -7,12 +7,17 @@ local uv = vim.uv or vim.loop
 local function cfg()
     return require("todo.config").get()
 end
-function M.new(ws, svc, ai, date)
+function M.new(ws, svc, ai, date, opts)
+    opts = opts or {}
     date = date or require("todo.planning").new(ws, svc):date()
     assert(require("todo.model").parse_deadline(date), "invalid date")
+    local view = opts.view or "today"
+    local filter_tag = opts.filters and opts.filters.tag or nil
+    local origin = view == "by_tag" and filter_tag and ("by_tag:" .. filter_tag) or view
+    local id = "daily:" .. origin .. ":" .. date
     instances[ws] = instances[ws] or {}
-    if instances[ws][date] then
-        local existing = instances[ws][date]
+    if instances[ws][id] then
+        local existing = instances[ws][id]
         if not existing.busy then
             existing.state = ws:get("conversation", existing.id) or existing.state
             existing:refresh()
@@ -20,10 +25,22 @@ function M.new(ws, svc, ai, date)
         return existing
     end
     local planner = require("todo.planning").new(ws, svc)
-    local id = "daily:" .. date
     local plan = planner:today(date)
     local self = setmetatable(
-        { ws = ws, service = svc, ai = ai, planner = planner, id = id, date = date, listeners = {}, busy = false },
+        {
+            ws = ws,
+            service = svc,
+            ai = ai,
+            planner = planner,
+            id = id,
+            date = date,
+            origin = origin,
+            view = view,
+            filters = vim.deepcopy(opts.filters or {}),
+            seed_uuids = vim.deepcopy(opts.task_uuids or {}),
+            listeners = {},
+            busy = false,
+        },
         M
     )
     self.state = ws:get("conversation", id)
@@ -32,6 +49,10 @@ function M.new(ws, svc, ai, date)
             scope = "daily_planning",
             schema_version = 1,
             date = date,
+            origin = origin,
+            seed_uuids = vim.deepcopy(opts.task_uuids or {}),
+            view = view,
+            filters = vim.deepcopy(opts.filters or {}),
             status = "preparing",
             queue = {},
             task_refs = {},
@@ -42,9 +63,13 @@ function M.new(ws, svc, ai, date)
             locks_confirmed = false,
             text_only = cfg().ai.text_only,
         }
+    self.state.origin = self.state.origin or origin
+    self.state.view = self.state.view or view
+    self.state.filters = self.state.filters or vim.deepcopy(opts.filters or {})
+    self.state.seed_uuids = self.state.seed_uuids or vim.deepcopy(opts.task_uuids or {})
     local directory = vim.fn.stdpath("state") .. "/todo.nvim/daily-drafts"
     vim.fn.mkdir(directory, "p", 448)
-    self.cache_path = directory .. "/" .. vim.fn.sha256(ws.store.path .. ":" .. date) .. ".json"
+    self.cache_path = directory .. "/" .. vim.fn.sha256(ws.store.path .. ":" .. id) .. ".json"
     self.cache = {}
     if uv.fs_stat(self.cache_path) then
         local ok, value = pcall(function()
@@ -56,7 +81,7 @@ function M.new(ws, svc, ai, date)
     end
     self.mode = require("todo.ai.permissions").mode(cfg().ai.mode)
     self:refresh()
-    instances[ws][date] = self
+    instances[ws][id] = self
     return self
 end
 function M:on_change(fn)
@@ -85,40 +110,109 @@ function M:save_cache()
     uv.fs_close(fd)
     assert(uv.fs_rename(tmp, self.cache_path))
 end
-function M:refresh()
-    local known, by_uuid = {}, {}
-    for _, entry in ipairs(self.state.queue) do
-        known[entry.uuid] = entry
-        entry.missing = true
+local function day_before(date)
+    local year, month, day = date:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    if not year then
+        return date
     end
+    local noon = os.time({ year = tonumber(year), month = tonumber(month), day = tonumber(day), hour = 12 })
+    return os.date("%Y-%m-%d", noon - 86400)
+end
+
+function M:compute_seed()
+    local seed = {}
+    local function add(uuid)
+        if uuid then
+            seed[uuid] = true
+        end
+    end
+    if self.state.seed_uuids and #self.state.seed_uuids > 0 then
+        for _, uuid in ipairs(self.state.seed_uuids) do
+            add(uuid)
+        end
+    elseif self.origin == "today" then
+        for _, item in ipairs(self.planner:today(self.date).items) do
+            add(item.task_uuid)
+        end
+        local previous = day_before(self.date)
+        for _, item in ipairs(self.planner:today(previous).items) do
+            local task = self.planner:task(item.task_uuid)
+            if task and not task.archived_at and (task.status == "todo" or task.status == "in_progress") then
+                add(item.task_uuid)
+            end
+        end
+    end
+    local result = {}
+    for uuid in pairs(seed) do
+        result[#result + 1] = uuid
+    end
+    table.sort(result)
+    return result
+end
+
+function M:refresh()
+    local by_uuid, tasks = {}, {}
     local plan = self.planner:today(self.date)
     for _, item in ipairs(plan.items) do
         by_uuid[item.task_uuid] = item
     end
+    for _, task in ipairs(self.service.store:list({ archived = false })) do
+        if task.kind ~= "notice" and (task.status == "todo" or task.status == "in_progress") then
+            tasks[task.sync_uuid] = task
+        end
+    end
+    local seed = self:compute_seed()
+    local wanted = {}
+    for _, uuid in ipairs(seed) do
+        wanted[uuid] = true
+    end
+    -- Existing manual additions survive a refresh. Unseeded legacy entries are
+    -- dropped so an old "all tasks" session cannot leak into the new scope.
+    local kept, known = {}, {}
+    for _, entry in ipairs(self.state.queue) do
+        if wanted[entry.uuid] or entry.manual then
+            entry.missing = tasks[entry.uuid] == nil
+            kept[#kept + 1] = entry
+            known[entry.uuid] = entry
+        end
+    end
+    self.state.queue = kept
     local next_ref = 0
     for ref in pairs(self.state.task_refs) do
         next_ref = math.max(next_ref, tonumber(ref:match("^t(%d+)$")) or 0)
     end
-    for _, task in ipairs(self.service.store:list({ archived = false })) do
-        if task.kind ~= "notice" and (task.status == "todo" or task.status == "in_progress") then
-            local e = known[task.sync_uuid]
-            if not e then
-                next_ref = next_ref + 1
-                e = {
-                    uuid = task.sync_uuid,
-                    ref = "t" .. next_ref,
-                    selected = true,
-                    locked = by_uuid[task.sync_uuid] and by_uuid[task.sync_uuid].locked == true or false,
-                }
-                self.state.queue[#self.state.queue + 1] = e
-                self.state.task_refs[e.ref] = e.uuid
-            end
-            e.task_id = task.id
-            e.title = task.title
-            e.priority = task.priority
-            e.status = task.status
-            e.due_date = task.due_date
-            e.missing = false
+    local function ensure(uuid, selected, manual)
+        local task = tasks[uuid]
+        if not task then
+            return
+        end
+        local e = known[uuid]
+        if not e then
+            next_ref = next_ref + 1
+            e = {
+                uuid = uuid,
+                ref = "t" .. next_ref,
+                selected = selected == true,
+                manual = manual == true,
+                locked = by_uuid[uuid] and by_uuid[uuid].locked == true or false,
+            }
+            known[uuid] = e
+            self.state.queue[#self.state.queue + 1] = e
+            self.state.task_refs[e.ref] = uuid
+        end
+        e.task_id = task.id
+        e.title = task.title
+        e.priority = task.priority
+        e.status = task.status
+        e.due_date = task.due_date
+        e.missing = false
+    end
+    for _, uuid in ipairs(seed) do
+        ensure(uuid, true, false)
+    end
+    for _, entry in ipairs(self.state.queue) do
+        if entry.uuid and tasks[entry.uuid] then
+            ensure(entry.uuid, entry.selected, entry.manual)
         end
     end
     table.sort(self.state.queue, function(a, b)
@@ -139,10 +233,53 @@ function M:refresh()
     return self.state.queue
 end
 function M:item_id(entry)
-    return "daily-item:" .. self.date .. ":" .. entry.uuid
+    return "daily-item:" .. self.origin .. ":" .. self.date .. ":" .. entry.uuid
+end
+
+function M:add_task(uuid)
+    local task
+    for _, candidate in ipairs(self.service.store:list({ archived = false })) do
+        if candidate.sync_uuid == uuid then
+            task = candidate
+            break
+        end
+    end
+    assert(task and task.kind ~= "notice" and not task.archived_at, "Only active tasks can be added")
+    assert(task.status == "todo" or task.status == "in_progress", "Only unfinished tasks can be added")
+    for _, entry in ipairs(self.state.queue) do
+        if entry.uuid == uuid then
+            entry.selected = true
+            entry.manual = true
+            self:save()
+            return entry
+        end
+    end
+    local next_ref = 0
+    for ref in pairs(self.state.task_refs) do
+        next_ref = math.max(next_ref, tonumber(ref:match("^t(%d+)$")) or 0)
+    end
+    local ref = "t" .. (next_ref + 1)
+    local entry = {
+        uuid = uuid,
+        ref = ref,
+        selected = true,
+        manual = true,
+        locked = false,
+        task_id = task.id,
+        title = task.title,
+        priority = task.priority,
+        status = task.status,
+        due_date = task.due_date,
+        missing = false,
+    }
+    self.state.task_refs[ref] = uuid
+    self.state.queue[#self.state.queue + 1] = entry
+    self:save()
+    return entry
 end
 function M:item(entry)
     return self.ws:get("conversation", self:item_id(entry))
+        or self.ws:get("conversation", "daily-item:" .. self.date .. ":" .. entry.uuid)
 end
 function M:document(entry)
     return require("todo.memory").new(self.ws, self.service):task_document(self.service.store:get(entry.task_id))
@@ -578,7 +715,8 @@ function M:_drive(answer)
             system_tail = common
                 .. [[
 UNDERSTANDING FIRST: Read title, full description, notes and prior explicit answers before asking anything. In EVERY question/item_review response include understanding:{goal_clear:boolean,goal:string,deliverable:string,unknowns:[short strings],evidence:[exact short quotes from this task, user answers or approved research excerpts]}. Explain this understanding in message, without claiming certainty you lack. A title/status alone does not establish a concrete goal, scope or completion criterion. If unclear, goal_clear=false and ask ONLY goal/scope/deliverable questions, each with intent:"goal"|"scope"|"deliverable". Do not ask how far the work has progressed until you understand what the work means. Once goal and deliverable are grounded, ask only decision-relevant missing progress/estimate/dependency questions with intent:"progress"|"estimate"|"dependency". Never run a fixed questionnaire or repeat facts already provided. If no useful question remains, finish immediately. If forced to finish with unclear goal, keep goal_clear=false and list uncertainty; never fabricate evidence. External research may be requested only to resolve a specific uncertainty, respecting permissions. Users can select an option AND add supplemental text/option notes; consider all of them. A note on an unselected option is still explicit user information; it does not imply acceptance of the option label. Quotes must be short verbatim excerpts, never translations or paraphrases; only whitespace may differ.
-DAILY ITEM REVIEW. Focus only on the current task; overview is context for dependencies. Never schedule every task in this response. Ask up to 3 related questions in one round with action="question" and questions as specified above, or finish using {"message":"...","action":"item_review","summary":"confirmed facts and explicit unknowns","review":{"minutes":30,"next_action":"...","completion":"...","dependencies":[],"unresolved":[]},"changes":[]}.
+FOLLOW-UP QUALITY: Rounds are adaptive. Ask 3-4 related questions when several gaps remain, and follow up on the user's previous answers instead of starting over. If an answer is vague, ask what specifically is meant. If an answer changes the plan, revisit the affected unknowns. If the user sends free-form guidance, treat it as explicit steering and revise the round or finish. Offer enough options: 3-5 for every choice question, including less obvious alternatives, tradeoffs, edge cases and an explicit "Other / not sure" when needed. Use multiple=true when several independent choices may apply. Do not reduce a nuanced decision to two options.
+DAILY ITEM REVIEW. Focus only on the current task; overview is context for dependencies. Never schedule every task in this response. Ask up to 4 related questions in one round with action="question" and questions as specified above, or finish using {"message":"...","action":"item_review","summary":"confirmed facts and explicit unknowns","review":{"minutes":30,"next_action":"...","completion":"...","dependencies":[],"unresolved":[]},"changes":[]}.
 Changes in an item review may ONLY propose description or note improvements for this current task, using its exact task_ref. Use user answers/images and preserve uncertainty. Estimates are remaining work, not time already spent. Avoid repeating already answered questions. At the round/request limit, finish with explicit assumptions instead of asking again.]],
         },
         function(result)
@@ -772,7 +910,17 @@ function M:submit(text, round, attachments, force)
     assert(not self.busy, "AI is still replying; stop it before submitting")
     local answer = { text = text, attachments = attachments, force = force }
     if round then
-        local s = self.ai:resume(self:item_id(e))
+        local missing = require("todo.ai.questions").missing(round)
+        if #missing > 0 and type(text) == "string" and vim.trim(text) ~= "" then
+            local first = missing[1]
+            round.answers[first.id] = round.answers[first.id] or { selected = {}, notes = {} }
+            round.answers[first.id].custom = text
+            text = ""
+        end
+        local valid, missing_message = require("todo.ai.questions").validate(round)
+        assert(valid, missing_message)
+        local s = assert(self:item(e), "No current AI session")
+        s = self.ai:resume(s.id)
         assert(s.round and s.round.id == round.id and s.round.status == "pending", "Question round changed")
         s.round = round
         self.ws:put("conversation", s.id, s)
@@ -795,6 +943,29 @@ function M:feedback(text)
     self.state.draft_id = nil
     self.state.summary = nil
     self:save()
+end
+
+--- Free-form steering while a question round is pending. The partial answers
+--- travel with the message, but the round itself is superseded and is never
+--- treated as submitted.
+function M:message(text)
+    assert(not self.busy, "AI is still replying; stop it before sending")
+    assert(type(text) == "string" and vim.trim(text) ~= "", "Message is empty")
+    local entry = assert(self:current(), "No current task")
+    local s = assert(self:item(entry), "No current AI session")
+    s = self.ai:resume(s.id)
+    local partial = ""
+    if s.round and s.round.status == "pending" then
+        partial = require("todo.ai.questions").display(s.round)
+        s.round.status = "superseded"
+        self.ws:put("conversation", s.id, s)
+    end
+    local message = "User guidance for the next questions (not a final answer; do not ignore):\n"
+        .. text
+    if partial ~= "" then
+        message = message .. "\n\nPartial answers so far (draft, not submitted):\n" .. partial
+    end
+    self:start({ text = message, force = false })
 end
 function M:skip()
     local e = assert(self:current())

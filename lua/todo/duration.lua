@@ -1,21 +1,8 @@
 local M = {}
-
-local units = { s = 1, m = 60, h = 3600, d = 86400 }
+local core = require("todo.core")
 
 function M.parse(value)
-    if type(value) == "number" then
-        return value > 0 and value % 1 == 0 and value or nil
-    end
-    local compact = vim.trim(value or ""):lower():gsub("%s+", "")
-    if compact == "" then
-        return nil
-    end
-    local total, rebuilt = 0, ""
-    for amount, unit in compact:gmatch("(%d+)([smhd])") do
-        rebuilt = rebuilt .. amount .. unit
-        total = total + tonumber(amount) * units[unit]
-    end
-    return rebuilt == compact and total > 0 and total or nil
+    return core.request("core.duration_parse", { value })
 end
 
 function M.format(seconds)

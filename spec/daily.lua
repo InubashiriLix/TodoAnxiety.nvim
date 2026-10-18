@@ -10,8 +10,10 @@ local function fixture(count, responder, date)
     local store = require("todo.store").open(vim.fn.tempname() .. ".db")
     local ws = require("todo.workspace").new(store)
     local svc = require("todo.service").new(store)
+    local uuids = {}
     for i = 1, count do
-        assert(svc:create({ title = "Task " .. i, description = "Complete description " .. i }))
+        local task = assert(svc:create({ title = "Task " .. i, description = "Complete description " .. i }))
+        uuids[#uuids + 1] = task.sync_uuid
     end
     local calls = {}
     local ai = require("todo.ai").new(ws, svc, {
@@ -34,7 +36,10 @@ local function fixture(count, responder, date)
             return { running = false, cancel = function() end }
         end,
     })
-    local ctl = require("todo.ai.daily").new(ws, svc, ai, date or "2026-10-16")
+    local ctl = require("todo.ai.daily").new(ws, svc, ai, date or "2026-10-16", {
+        view = "active",
+        task_uuids = uuids,
+    })
     return ctl, ws, svc, ai, calls
 end
 local function review(s)
@@ -124,6 +129,7 @@ local c, w, service, api, requests = fixture(1, function(s, n, body)
                 options = {
                     { id = "a", label = "A" },
                     { id = "b", label = "B" },
+                    { id = "c", label = "C" },
                 },
             },
         },
@@ -136,11 +142,17 @@ for round = 1, 10 do
     local ledger = c:item(c:current())
     assert(ledger.questions == round)
     c:pause()
-    local resumed = require("todo.ai.daily").new(w, service, api, c.date)
+    local resumed = require("todo.ai.daily").new(w, service, api, c.date, {
+        view = c.view,
+        task_uuids = c.state.seed_uuids,
+    })
     assert(resumed == c and resumed:item(c:current()).questions == round)
     if round == 5 then
         package.loaded["todo.ai.daily"] = nil
-        local restored = require("todo.ai.daily").new(w, service, api, c.date)
+        local restored = require("todo.ai.daily").new(w, service, api, c.date, {
+            view = c.view,
+            task_uuids = c.state.seed_uuids,
+        })
         assert(restored ~= c and restored:item(restored:current()).questions == 5)
         c = restored
     end
@@ -150,7 +162,10 @@ for round = 1, 10 do
     wait(c)
 end
 assert(c.state.status == "review" and #requests == 12, "10 rounds then item result then final")
-local nextday = require("todo.ai.daily").new(w, service, api, "2026-10-17")
+local nextday = require("todo.ai.daily").new(w, service, api, "2026-10-17", {
+    view = c.view,
+    task_uuids = c.state.seed_uuids,
+})
 assert(not nextday:item(nextday.state.queue[1]))
 print("ok - 10 question rounds per task/date, reopen retains quota, next date resets")
 local lock, lws, lsvc, lai, lcalls = fixture(1, review)
@@ -199,7 +214,10 @@ stale:start()
 wait(stale)
 assert(#sr == 4)
 print("ok - modifying task invalidates its review and forces reread")
-local nextday = require("todo.ai.daily").new(sw, ss, sa, "2026-10-17")
+local nextday = require("todo.ai.daily").new(sw, ss, sa, "2026-10-17", {
+    view = stale.view,
+    task_uuids = stale.state.seed_uuids,
+})
 prepare(nextday)
 nextday:start()
 wait(nextday)

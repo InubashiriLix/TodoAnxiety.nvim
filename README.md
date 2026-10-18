@@ -26,6 +26,9 @@ should I do next?”
 ## Requirements
 
 - Neovim 0.10+
+- **Rust core** (`todo-core`): required, there is no Lua fallback. Build it with
+  `cargo build --release --manifest-path core/Cargo.toml` (or use a release
+  artifact), or set `core.bin` / `$TODO_CORE_BIN`.
 - [`kkharji/sqlite.lua`](https://github.com/kkharji/sqlite.lua)
 - [`MunifTanjim/nui.nvim`](https://github.com/MunifTanjim/nui.nvim)
 - [`folke/which-key.nvim`](https://github.com/folke/which-key.nvim) v3 (optional,
@@ -61,6 +64,7 @@ Example with lazy.nvim:
   config = function()
     require("todo").setup()
   end,
+  build = "cargo build --release --manifest-path core/Cargo.toml",
 }
 ```
 
@@ -446,11 +450,14 @@ on Linux and macOS with Neovim 0.10.4 and the current stable release.
 `:Todo plan` prepares and reviews tasks sequentially with a Vim composer, images and streaming replies; `Q` clarifies the selected task. In the default plan mode, AI changes
 remain drafts until individually selected and applied. One `U` undoes the batch.
 
-Enable `ai.enabled = true` in setup, then use `:Todo ai key` (hidden input), or set
-`DEEPSEEK_API_KEY`. Device-local credentials are stored with mode 0600 and never
-synced. An existing `~/.deepseek-mcp/config.json` key is supported as a fallback.
+Enable `ai.enabled = true` in setup, then use `:Todo ai setup` (full provider/key
+dialog), `:Todo ai key` (hidden input), or set `DEEPSEEK_API_KEY`. Device-local
+credentials are stored with mode 0600 and never synced. Supported providers:
+DeepSeek native, OpenAI Responses (`provider = "openai"`), Anthropic Messages
+(`provider = "anthropic"`), and any Chat Completions-compatible service
+(`provider = "openai_compatible"`). OpenAI/Anthropic require an explicit model.
 Language/persona are editable with `:Todo ai settings`. Default limits are ten
-questions and twenty requests per conversation; costs are visible estimates.
+question rounds and twenty requests per conversation; costs are visible estimates.
 
 Images can be pasted into Markdown descriptions and AI answers, copied into
 managed storage and synced by the optional Rust server. Network IO is async;

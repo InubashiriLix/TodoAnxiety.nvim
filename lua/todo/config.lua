@@ -3,6 +3,7 @@ local M = {}
 local defaults = {
     db_path = vim.fn.stdpath("data") .. "/todo.nvim/todo.db",
     language = "en",
+    core = { bin = "" }, -- Required Rust core binary; empty finds core/target or $TODO_CORE_BIN.
     ai = {
         enabled = false,
         provider = "deepseek",
@@ -36,7 +37,7 @@ local defaults = {
         persona = "A practical, patient planning assistant. Ask only necessary questions, then propose an executable plan.",
         planning = {
             max_rounds_per_item = 10,
-            questions_per_round = 3,
+            questions_per_round = 4,
             max_requests_per_item = 16,
             max_requests_total = false,
             stream = true,
@@ -111,6 +112,43 @@ local defaults = {
 
 local current = vim.deepcopy(defaults)
 
+local function local_ai_path()
+    return vim.fn.stdpath("data") .. "/todo.nvim/ai.json"
+end
+
+function M.local_ai()
+    if vim.env.TODO_DISABLE_LOCAL_AI == "1" then
+        return {}
+    end
+    local path = local_ai_path()
+    local stat = (vim.uv or vim.loop).fs_stat(path)
+    if not stat or stat.type ~= "file" or stat.size > 65536 then
+        return {}
+    end
+    local ok, value = pcall(function()
+        return vim.json.decode(table.concat(vim.fn.readfile(path), "\n"))
+    end)
+    return ok and type(value) == "table" and value or {}
+end
+
+function M.set_local_ai(values)
+    local uv = vim.uv or vim.loop
+    local saved = M.local_ai()
+    for key, value in pairs(values or {}) do
+        saved[key] = value
+        current.ai[key] = value
+    end
+    local dir = vim.fs.dirname(local_ai_path())
+    vim.fn.mkdir(dir, "p", 448)
+    local tmp = local_ai_path() .. ".tmp"
+    local fd = assert(uv.fs_open(tmp, "w", 384), "cannot save AI settings")
+    assert(uv.fs_write(fd, vim.json.encode(saved), 0))
+    uv.fs_close(fd)
+    assert(uv.fs_rename(tmp, local_ai_path()))
+    pcall(uv.fs_chmod, local_ai_path(), 384)
+    return saved
+end
+
 local function validate(opts)
     assert(type(opts.sync) == "table" and type(opts.sync.enabled) == "boolean", "sync.enabled must be a boolean")
     local function credential(value, file, env, label)
@@ -180,7 +218,13 @@ local function validate(opts)
         "invalid AI request limits"
     )
     assert(type(opts.ai.persona) == "string" and type(opts.ai.language) == "string", "invalid AI profile")
-    assert(opts.ai.provider == "deepseek" or opts.ai.provider == "openai_compatible", "unsupported AI provider")
+    assert(
+        opts.ai.provider == "deepseek"
+            or opts.ai.provider == "openai_compatible"
+            or opts.ai.provider == "openai"
+            or opts.ai.provider == "anthropic",
+        "unsupported AI provider"
+    )
     assert(
         type(opts.ai.base_url) == "string"
             and opts.ai.base_url:match("^https://")
@@ -191,9 +235,15 @@ local function validate(opts)
         opts.ai.provider ~= "deepseek" or opts.ai.base_url:gsub("/+$", "") == "https://api.deepseek.com",
         "Custom AI endpoints must use openai_compatible to isolate credentials"
     )
+    if opts.ai.provider == "openai" or opts.ai.provider == "anthropic" or opts.ai.provider == "openai_compatible" then
+        assert(opts.ai.base_url ~= "", "AI base_url required for this provider")
+        assert(opts.ai.model ~= "", "AI model required for this provider")
+    end
     assert(type(opts.ai.model) == "string" and opts.ai.model ~= "", "AI model required")
     assert(
-        opts.ai.max_tokens_field == "max_tokens" or opts.ai.max_tokens_field == "max_completion_tokens",
+        opts.ai.max_tokens_field == "max_tokens"
+            or opts.ai.max_tokens_field == "max_completion_tokens"
+            or opts.ai.max_tokens_field == "max_output_tokens",
         "unsupported token limit field"
     )
     for name, value in pairs(opts.ai.capabilities) do
@@ -263,6 +313,13 @@ local function validate(opts)
         sidebar = { opts.ui.sidebar, "table" },
     })
     vim.validate({
+        core_bin = {
+            opts.core.bin,
+            function(v)
+                return type(v) == "string"
+            end,
+            "string",
+        },
         float_width = {
             opts.ui.float.width,
             function(v)
@@ -341,16 +398,46 @@ local function validate(opts)
 end
 
 function M.setup(opts)
-    current = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
-    if current.ai.provider == "openai_compatible" then
-        local supplied = (opts or {}).ai or {}
-        assert(supplied.base_url and supplied.model, "OpenAI compatible provider requires base_url and model")
-        if supplied.pricing == nil then
-            current.ai.pricing = false
+    local local_ai = M.local_ai()
+    current = vim.tbl_deep_extend("force", vim.deepcopy(defaults), { ai = local_ai }, opts or {})
+    local supplied = (opts or {}).ai or {}
+    local presets = {
+        deepseek = {
+            base_url = "https://api.deepseek.com",
+            model = "deepseek-flash",
+            api_key_env = "DEEPSEEK_API_KEY",
+            max_tokens_field = "max_tokens",
+        },
+        openai = {
+            base_url = "https://api.openai.com/v1",
+            api_key_env = "OPENAI_API_KEY",
+            max_tokens_field = "max_output_tokens",
+        },
+        anthropic = {
+            base_url = "https://api.anthropic.com",
+            api_key_env = "ANTHROPIC_API_KEY",
+            max_tokens_field = "max_tokens",
+        },
+        openai_compatible = { api_key_env = "AI_API_KEY", max_tokens_field = "max_tokens" },
+    }
+    local preset = presets[current.ai.provider]
+    if preset then
+        local local_provider = local_ai.provider == current.ai.provider
+        if supplied.base_url == nil and not (local_provider and local_ai.base_url) then
+            current.ai.base_url = preset.base_url or ""
         end
-        if supplied.api_key_env == nil then
-            current.ai.api_key_env = "AI_API_KEY"
+        if supplied.model == nil and not (local_provider and local_ai.model) then
+            current.ai.model = preset.model or ""
         end
+        if supplied.api_key_env == nil and preset.api_key_env then
+            current.ai.api_key_env = preset.api_key_env
+        end
+        if supplied.max_tokens_field == nil and preset.max_tokens_field then
+            current.ai.max_tokens_field = preset.max_tokens_field
+        end
+    end
+    if current.ai.provider ~= "deepseek" and supplied.pricing == nil then
+        current.ai.pricing = false
     end
     if opts and opts.ai and opts.ai.max_questions and not opts.ai.max_rounds then
         current.ai.max_rounds = opts.ai.max_questions
@@ -410,7 +497,7 @@ function M.setup(opts)
         "invalid item rounds"
     )
     assert(
-        daily.questions_per_round >= 1 and daily.questions_per_round <= 3 and daily.questions_per_round % 1 == 0,
+        daily.questions_per_round >= 1 and daily.questions_per_round <= 4 and daily.questions_per_round % 1 == 0,
         "invalid daily question count"
     )
     assert(daily.max_requests_per_item >= 2 and daily.max_requests_per_item % 1 == 0, "invalid per-item request cap")

@@ -65,12 +65,20 @@ function M.card(task, width, reason, opts)
     end
 
     opts = opts or {}
+    local mark = require("todo.ui.task_mark")
+    local done = mark.done(task)
     local icon = status_icons[task.status] or "?"
     local badge = string.format("[P%d]", task.priority)
-    local prefix = icon .. " " .. badge .. " "
+    local left_group = mark.left_group(task, opts.plan_state)
+    local ai_group = done and nil or mark.ai_group(opts.ai_selected)
+    local left = left_group and "▎ " or "  "
+    local ai_mark = ai_group and "■ " or "  "
+    local prefix = left .. icon .. " " .. ai_mark .. badge .. " "
     local prefix_width = vim.fn.strdisplaywidth(prefix)
-    local title = M.truncate(task.title, math.max(1, width - prefix_width))
-    local line1 = prefix .. title
+    local right = done and "" or " ▐"
+    local right_width = done and 0 or 2
+    local title = M.truncate(task.title, math.max(1, width - prefix_width - right_width))
+    local line1 = prefix .. title .. right
 
     local due_text
     if opts.relative then
@@ -115,8 +123,19 @@ function M.card(task, width, reason, opts)
     local line2 = indent .. urgency_cell .. " " .. due_cell .. " " .. tags_text
     -- Narrow windows (sidebar) can't fit both fixed columns; truncate rather
     -- than overflow the window width.
-    line2 = M.truncate(line2, width)
-    return line1, line2
+    line2 = M.truncate(line2, math.max(1, width - right_width)) .. right
+    local info = {
+        left_group = left_group,
+        ai_group = ai_group,
+        priority_group = mark.priority_group(task),
+        due_group = mark.due_group(task),
+        right_group = mark.right_group(task),
+        badge = badge,
+        due_text = due_text,
+        done = done,
+        has_right = not done,
+    }
+    return line1, line2, info
 end
 
 return M

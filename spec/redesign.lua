@@ -229,6 +229,7 @@ test("question form persists >3 questions, annotations and single submission acr
             options = {
                 { id = "a", label = "选项甲", description = "说明甲" },
                 { id = "b", label = "选项乙" },
+                { id = "c", label = "选项丙" },
             },
         }
     end
@@ -262,6 +263,10 @@ test("question form persists >3 questions, annotations and single submission acr
     press("j")
     press("<Space>")
     assert(ai:resume(s.id).round.answers.q2.selected.a and ai:resume(s.id).round.answers.q2.selected.b)
+    for _ = 3, 5 do
+        press("<Tab>")
+        press("<Space>")
+    end
     press("q")
     assert(requests == 0 and ai:resume(s.id).questions == 1)
     owner = ui.questions(s.id)

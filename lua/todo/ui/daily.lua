@@ -53,10 +53,11 @@ function M.open(opts)
     local todo = require("todo")
     local svc = todo._service()
     local ws = require("todo.workspace").new(svc.store)
-    local ctl = require("todo.ai.daily").new(ws, svc, todo._ai(), opts.date)
+    local ctl = require("todo.ai.daily").new(ws, svc, todo._ai(), opts.date, opts)
     local snapshot = require("todo.ui.snapshot").new(svc)
     local owner = {
         controller = ctl,
+        origin = opts.view or ctl.origin,
         closed = false,
         composers = {},
         sent_text = {},
@@ -68,6 +69,9 @@ function M.open(opts)
         queue_open = false,
         option_positions = {},
         follow_reply = true,
+        awaiting = false,
+        chat_mode = false,
+        show_composer = false,
     }
     current = owner
     owner.header = popup(false, false)
@@ -213,6 +217,18 @@ function M.open(opts)
         action(pop, "return_to_choices", function()
             return_to_choices()
         end)
+        -- OpenCode-style composer: Enter submits/saves and returns to choices;
+        -- Shift-Enter / Ctrl-J inserts a newline.
+        vim.keymap.set("i", "<CR>", function()
+            vim.cmd("stopinsert")
+            return_to_choices()
+        end, { buffer = pop.bufnr, silent = true })
+        vim.keymap.set("i", "<Tab>", function()
+            vim.cmd("stopinsert")
+            return_to_choices()
+        end, { buffer = pop.bufnr, silent = true })
+        vim.keymap.set({ "i" }, "<C-J>", "<CR>", { buffer = pop.bufnr, silent = true })
+        vim.keymap.set({ "i" }, "<S-CR>", "<CR>", { buffer = pop.bufnr, silent = true })
         map(pop, "<localleader>q", function()
             return_to_choices()
         end)
@@ -268,6 +284,9 @@ function M.open(opts)
         if not entry then
             return { key = "general", label = L("Planning feedback", "规划说明") }
         end
+        if owner.chat_mode then
+            return { key = "chat:" .. entry.uuid, label = L("Message AI", "给 AI 发消息"), entry = entry }
+        end
         local round = round_for(entry)
         if round then
             owner.tab = math.max(1, math.min(owner.tab, #round.questions + 1))
@@ -315,7 +334,7 @@ function M.open(opts)
             or owner.mode_picker
             or ctl.state.status == "preparing"
             or owner.queue_open
-            or round ~= nil
+            or (round ~= nil and not ctl.busy and not owner.awaiting)
         local boxes = {}
         owner.small = small
         if small or owner.maximized then
@@ -344,8 +363,10 @@ function M.open(opts)
                         Layout.Box(owner.questions, { size = math.max(4, math.floor(size.height * 0.48)) })
                 end
             end
-            boxes[#boxes + 1] = Layout.Box(owner.composer, { size = size.height >= 30 and 5 or 3 })
-            boxes[#boxes + 1] = Layout.Box(owner.footer, { size = 2 })
+            if owner.show_composer then
+                boxes[#boxes + 1] = Layout.Box(owner.composer, { size = size.height >= 30 and 5 or 3 })
+            end
+            boxes[#boxes + 1] = Layout.Box(owner.footer, { size = 3 })
         end
         local signature = size.width
             .. ":"
@@ -355,7 +376,11 @@ function M.open(opts)
             .. ":"
             .. ctl.state.status
             .. ":"
-            .. owner.composing_key
+            .. tostring(ctl.busy)
+            .. ":"
+            .. tostring(owner.awaiting)
+            .. ":"
+            .. tostring(owner.show_composer)
             .. ":"
             .. tostring(owner.tiny_view)
             .. ":"
@@ -422,6 +447,10 @@ function M.open(opts)
             pcall(vim.api.nvim_del_augroup_by_id, owner.group)
         end
         require("todo.ui.hints").close(owner)
+        if owner.context_popup and vim.api.nvim_buf_is_valid(owner.context_popup.bufnr) then
+            pcall(owner.context_popup.unmount, owner.context_popup)
+            owner.context_popup = nil
+        end
         owner.layout:unmount()
         for _, pop in pairs(owner.composers) do
             if pop.editor then
@@ -465,10 +494,15 @@ function M.open(opts)
             save_draft(pop, owner.contexts[owner.composing_key])
             ctl:save_cache()
             pop.editor.mark_saved()
+            if vim.trim(buffer_text(pop)) == "" then
+                owner.show_composer = false
+            end
         end
+        owner.chat_mode = false
         focus_pane("questions")
     end
     focus_input = function(insert)
+        owner.show_composer = true
         select_context(true)
         focus_pane("composer")
         if valid(owner.composer) and insert then
@@ -565,6 +599,16 @@ function M.open(opts)
             owner.maximized = not owner.maximized and name or nil
             focus_pane(name)
         end)
+        action(pop, "read_top", function()
+            if not valid(owner.timeline) then
+                return
+            end
+            owner.follow_reply = false
+            vim.api.nvim_win_call(owner.timeline.winid, function()
+                vim.cmd("normal! gg")
+            end)
+            render()
+        end, { "n", "i" })
     end
     for _, pop in ipairs({ owner.timeline, owner.questions, owner.composer }) do
         bind_panes(pop)
@@ -583,6 +627,9 @@ function M.open(opts)
             end
             local ctl = snapshot:daily(ctl)
             local svc = snapshot.service
+            if valid(owner.composer) and vim.trim(buffer_text(owner.composer)) ~= "" then
+                owner.show_composer = true
+            end
             reflow()
             local done, total = ctl:counts()
             local usage = ctl.ai:usage(ctl.id)
@@ -623,7 +670,7 @@ function M.open(opts)
                         pcall(vim.api.nvim_win_set_cursor, owner.timeline.winid, { 1, 0 })
                         owner.preview_uuid = (ctl.state.queue[owner.selection] or {}).uuid
                     end
-                elseif owner.follow_reply then
+                elseif owner.follow_reply or ctl.busy then
                     pcall(
                         vim.api.nvim_win_set_cursor,
                         owner.timeline.winid,
@@ -647,6 +694,13 @@ function M.open(opts)
                 question_doc = view.questions(round_for(entry), owner.tab, owner.option, width(owner.questions))
             end
             local round = round_for(entry)
+            if round and not ctl.busy then
+                if owner.awaiting then
+                    owner.awaiting = false
+                    owner.composing_key = nil
+                    select_context(true)
+                end
+            end
             local screen_key = ctl.permission and ("permission:" .. (ctl.permission.id or ctl.permission.target or ""))
                 or owner.mode_picker and "modes"
                 or (ctl.state.status == "preparing" or owner.queue_open) and "tasks"
@@ -678,6 +732,12 @@ function M.open(opts)
             local cost = usage.unknown > 0 and L("cost partially unknown", "部分费用未知")
                 or string.format("~$%.5f", usage.usd)
             local editing = vim.api.nvim_get_current_buf() == owner.composer.bufnr
+            if valid(owner.composer) then
+                pcall(function()
+                    vim.bo[owner.composer.bufnr].modifiable = not ctl.busy
+                    vim.bo[owner.composer.bufnr].readonly = ctl.busy
+                end)
+            end
             local choosing = vim.api.nvim_get_current_buf() == owner.questions.bufnr
             local preview = round and owner.tab > #round.questions
             local actions = {}
@@ -720,6 +780,7 @@ function M.open(opts)
                     hint(keys.label("toggle"), L("Include / exclude", "参与／排除"))
                 end
                 hint(keys.label("edit_note"), L("Edit task", "编辑任务"))
+                hint("A", L("Add existing", "添加已有"))
             elseif owner.queue_open then
                 hint("b", L("Back to questions", "返回问题"))
             elseif preview then
@@ -730,9 +791,18 @@ function M.open(opts)
             else
                 if choosing and round then
                     hint(keys.label("select"), L("Select", "选择"))
+                    hint(keys.label("supplement"), L("Supplement", "补充"))
                     hint(keys.label("edit_note"), L("Add note", "附加说明"))
+                    hint(keys.label("chat"), L("Message AI", "给 AI 发消息"))
+                    hint("T", L("Prompt presets", "提示词"))
+                    hint("D", L("Task context", "任务原文"))
+                    hint("d", L("Details", "详情"))
                 end
                 hint(keys.label("preview"), round and L("Preview answers", "提交预览") or L("Continue", "继续"))
+                hint("D", L("Task context", "任务原文"))
+                if round then
+                    hint(keys.label("chat"), L("Message AI", "给 AI 发消息"))
+                end
             end
             if vim_mode == "NORMAL" then
                 hint(keys.label("maximize"), owner.maximized and L("Restore", "还原") or L("Maximize", "最大化"))
@@ -745,7 +815,7 @@ function M.open(opts)
                     { key = keys.label("read_latest"), label = L("New reply ↓", "有新回复 ↓") }
                 )
             end
-            local footer = require("todo.ui.hints").lines(actions, math.max(1, width), 1)
+            local footer = require("todo.ui.hints").lines(actions, math.max(1, width), 2)
             table.insert(
                 footer,
                 1,
@@ -847,16 +917,84 @@ function M.open(opts)
             if not owner.closed and ctl.busy and owner.spinner_row and valid(owner.timeline) then
                 local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
                 local f = frames[math.floor((vim.uv or vim.loop).hrtime() / 1.5e8) % #frames + 1]
-                vim.api.nvim_buf_set_extmark(owner.timeline.bufnr, spinner_ns, owner.spinner_row, 0, {
-                    id = 1,
-                    virt_text = { { "  " .. f, "TodoDailyAccent" } },
-                    virt_text_pos = "overlay",
-                })
+                local row = tonumber(owner.spinner_row)
+                if row and row >= 0 and row < vim.api.nvim_buf_line_count(owner.timeline.bufnr) then
+                    vim.api.nvim_buf_set_extmark(owner.timeline.bufnr, spinner_ns, row, 0, {
+                        id = 1,
+                        virt_text = { { "  " .. f, "TodoDailyAccent" } },
+                        virt_text_pos = "overlay",
+                    })
+                end
             end
         end)
     )
+    local function open_task_context()
+        local entry = ctl:current()
+        if not entry then
+            return
+        end
+        local task = svc.store:get(entry.task_id)
+        if not task then
+            return
+        end
+        if owner.context_popup and valid(owner.context_popup) then
+            pcall(owner.context_popup.unmount, owner.context_popup)
+            owner.context_popup = nil
+        end
+        local lines = require("todo.ui.markdown").task_lines(task, {
+            notes = snapshot:list("note"),
+        })
+        local plan_item
+        for _, item in ipairs(ctl.planner:today(ctl.date).items) do
+            if item.task_uuid == entry.uuid then
+                plan_item = item
+                break
+            end
+        end
+        if plan_item then
+            vim.list_extend(lines, {
+                "",
+                "## " .. L("Today plan", "今日计划"),
+                "",
+                "- " .. L("Group", "分组") .. ": " .. tostring(plan_item.group or "next"),
+                "- " .. L("Minutes", "预计分钟") .. ": " .. tostring(plan_item.minutes or 0),
+                "- " .. L("Next action", "下一步") .. ": " .. tostring(plan_item.next_action or ""),
+                "- " .. L("Done when", "完成标准") .. ": " .. tostring(plan_item.completion or ""),
+                "- " .. L("Locked", "已锁定") .. ": " .. tostring(plan_item.locked == true),
+            })
+        end
+        local pop = Popup({
+            relative = "editor",
+            position = "50%",
+            enter = true,
+            size = {
+                width = math.max(30, math.min(100, math.floor(vim.o.columns * 0.72))),
+                height = math.max(8, math.min(40, math.floor(vim.o.lines * 0.72))),
+            },
+            border = { style = "rounded", text = { top = " " .. L("Task context", "任务原文与计划") .. " " } },
+            buf_options = { buftype = "nofile", bufhidden = "wipe", swapfile = false },
+            win_options = { wrap = true, winhighlight = "Normal:TodoDailySurface,FloatBorder:TodoDailyRule" },
+        })
+        pop:mount()
+        vim.api.nvim_buf_set_lines(pop.bufnr, 0, -1, false, lines)
+        vim.bo[pop.bufnr].modifiable = false
+        require("todo.ui.markdown").attach(pop.bufnr)
+        local function close()
+            pcall(pop.unmount, pop)
+            if owner.context_popup == pop then
+                owner.context_popup = nil
+            end
+        end
+        vim.keymap.set("n", "q", close, { buffer = pop.bufnr, silent = true })
+        vim.keymap.set("n", "<Esc>", close, { buffer = pop.bufnr, silent = true })
+        owner.context_popup = pop
+    end
+
     submit = function()
-        assert(not ctl.busy, L("AI is replying; Ctrl-c stops it.", "AI 正在回复；Ctrl-c 可停止。"))
+        if ctl.busy then
+            vim.notify(L("AI is replying; Ctrl-c stops it.", "AI 正在回复；Ctrl-c 可停止。"), vim.log.levels.WARN)
+            return
+        end
         if ctl.state.status == "review" or ctl.state.status == "applied" then
             assert(ctl.state.draft_id, "No draft yet")
             local id = ctl.state.draft_id
@@ -884,6 +1022,24 @@ function M.open(opts)
             ctl:start()
             return
         end
+        if owner.chat_mode then
+            if vim.trim(text) == "" then
+                ctl.state.last_error = L("Message is empty", "消息为空")
+                ctl:emit()
+                return
+            end
+            owner.chat_mode = false
+            owner.awaiting = true
+            owner.show_composer = false
+            vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, { "" })
+            owner.sent_text[owner.composing_key] = ""
+            ctl:message(text)
+            owner.follow_reply = true
+            select_context(true)
+            render()
+            focus_pane("timeline")
+            return
+        end
         local entry = ctl:current()
         local round = round_for(entry)
         -- A lazily retained editor may belong to the previous question/task.
@@ -897,12 +1053,41 @@ function M.open(opts)
             return
         end
         assert(entry, "No current task")
+        if round then
+            local valid, missing = require("todo.ai.questions").validate(round)
+            if not valid then
+                ctl.state.last_error = missing
+                ctl:emit()
+                owner.tab = 1
+                for index, question in ipairs(round.questions) do
+                    if not require("todo.ai.questions").answered(round, question) then
+                        owner.tab = index
+                        break
+                    end
+                end
+                render()
+                return
+            end
+            -- Collapse the choices immediately; the next round is a fresh UI.
+            ctl.cache.rounds = ctl.cache.rounds or {}
+            ctl.cache.rounds[ctl:item_id(entry)] = nil
+        end
         owner.sent_text[owner.composing_key] = text
-        local transcript = (round and require("todo.ai.questions").transcript(round) or "") .. "\n" .. extra
-        ctl:submit(extra, round, require("todo.assets").refs(transcript))
-        owner.note_option = nil
+        owner.awaiting = true
         owner.tab = 1
         owner.option = 1
+        owner.note_option = nil
+        owner.chat_mode = false
+        owner.show_composer = false
+        if valid(owner.composer) then
+            vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, { "" })
+            owner.sent_text[owner.composing_key] = ""
+        end
+        local transcript = (round and require("todo.ai.questions").transcript(round) or "") .. "\n" .. extra
+        ctl:submit(extra, round, require("todo.assets").refs(transcript))
+        owner.follow_reply = true
+        render()
+        focus_pane("timeline")
     end
     edit_task = function(add)
         assert(not ctl.busy, "Stop the request before editing")
@@ -963,31 +1148,17 @@ function M.open(opts)
                         ),
                     },
                     { key = "Ctrl-q", label = L("Pause and close", "暂停并关闭") },
-                    { key = "Enter (input)", label = L("Native newline", "原生换行") },
-                    { key = "Esc (Insert)", label = L("Normal mode", "返回 Normal 模式") },
-                    {
-                        key = keys.label("return_to_choices") .. " (Normal input)",
-                        label = L("Save and return to choices", "保存草稿并返回原选项"),
-                    },
-                    { key = ":w / :wq / :x", label = L("Save / save and return", "保存／保存并返回") },
-                    {
-                        key = ":q / :q!",
-                        label = L("Return / discard since last save", "返回／丢弃上次保存后的修改"),
-                    },
-                    {
-                        key = keys.label("maximize"),
-                        label = L("Maximize / restore focused pane", "最大化／还原当前区域"),
-                    },
-                    { key = "u / Ctrl-r (input)", label = L("Native text undo/redo", "原生文本撤销／重做") },
-                    { key = "Ctrl-v (Normal)", label = L("Native block selection", "原生块选择") },
-                    { key = "Ctrl-v (Insert)", label = L("Paste image", "粘贴图片") },
-                    { key = "<localleader>p", label = L("Paste image in Normal mode", "Normal 模式粘贴图片") },
-                    {
-                        key = keys.label("focus_left") .. " / " .. keys.label("focus_down") .. " / " .. keys.label(
-                            "focus_up"
-                        ) .. " / " .. keys.label("focus_right"),
-                        label = L("Focus pane (Normal)", "切换区域（Normal）"),
-                    },
+                    { key = "Tab (options)", label = L("Supplement current option", "补充当前选项") },
+                    { key = "Tab / Enter (input)", label = L("Save and return to options", "保存并返回选项") },
+                    { key = "Enter (options)", label = L("Confirm and next question", "确认并进入下一题") },
+                    { key = "Space (options)", label = L("Toggle without advancing", "勾选但不跳题") },
+                    { key = "Shift-Enter / Ctrl-J", label = L("Newline in composer", "输入框内换行") },
+                    { key = "t", label = L("Message AI with free-form guidance", "给 AI 发自由指导") },
+                    { key = "T", label = L("Useful steering prompt presets", "有用的指导提示词") },
+                    { key = "D", label = L("Open full task context and plan", "查看任务原文与今日计划") },
+                    { key = "d", label = L("Toggle details in timeline", "在对话区展开任务详情") },
+                    { key = "End / Ctrl-Alt-g", label = L("Jump to latest reply", "跳到最新回复") },
+                    { key = "Home / Ctrl-g", label = L("Jump to top", "跳到顶部") },
                     {
                         key = keys.label("read_half_up") .. " / " .. keys.label("read_half_down"),
                         label = L("Scroll AI reply half page", "上下翻阅 AI 回复半页"),
@@ -1013,6 +1184,23 @@ function M.open(opts)
                         key = keys.label("edit_note") .. " (options)",
                         label = L("Annotate even unselected options", "给选项附加说明，无需勾选"),
                     },
+                    {
+                        key = keys.label("focus_left")
+                            .. " / "
+                            .. keys.label("focus_down")
+                            .. " / "
+                            .. keys.label("focus_up")
+                            .. " / "
+                            .. keys.label("focus_right"),
+                        label = L("Focus pane (Normal)", "切换区域（Normal）"),
+                    },
+                    {
+                        key = keys.label("maximize"),
+                        label = L("Maximize / restore focused pane", "最大化／还原当前区域"),
+                    },
+                    { key = "Ctrl-v (Insert)", label = L("Paste image", "粘贴图片") },
+                    { key = "<localleader>p", label = L("Paste image in Normal mode", "Normal 模式粘贴图片") },
+                    { key = "Ctrl-r (input)", label = L("Native text redo", "原生文本重做") },
                     { key = "M", label = L("Choose plan / build / auto", "选择 plan／build／auto 权限模式") },
                     {
                         key = "y / Y / n",
@@ -1024,6 +1212,7 @@ function M.open(opts)
                     { key = "C / B", label = L("Work / reserve minutes", "工作／预留分钟") },
                     { key = "L", label = L("Lock selected task", "固定／解锁所选任务") },
                     { key = "a/e (preparation)", label = L("Create/edit task", "新增／编辑任务") },
+                    { key = "A (preparation)", label = L("Add existing task", "添加已有任务") },
                     { key = "s", label = L("Defer current task", "稍后处理当前任务") },
                     {
                         key = "g (choices) / c (context)",
@@ -1095,10 +1284,58 @@ function M.open(opts)
         cache_later()
         render()
     end
+    local function supplement()
+        if ctl.busy or ctl.permission or owner.mode_picker or owner.queue_open then
+            return
+        end
+        if ctl.state.status == "preparing" then
+            return
+        end
+        local round = round_for(ctl:current())
+        local q = round and round.questions[owner.tab]
+        if not q then
+            return
+        end
+        owner.chat_mode = false
+        owner.note_option = owner.option <= #q.options and owner.option or nil
+        focus_input(true)
+    end
     for _, pop in ipairs({ owner.timeline, owner.questions }) do
         action(pop, "input", function()
             owner.note_option = nil
+            owner.chat_mode = false
             focus_input(true)
+        end)
+        action(pop, "chat", function()
+            if ctl.busy or ctl.permission or owner.mode_picker then
+                return
+            end
+            owner.note_option = nil
+            owner.chat_mode = true
+            focus_input(true)
+        end)
+        action(pop, "supplement", supplement)
+        map(pop, "T", function()
+            if ctl.busy or ctl.permission or owner.mode_picker then
+                return
+            end
+            local presets = {
+                L("Ask me 3 more questions about scope and acceptance.", "再追问我 3 个问题，重点确认范围和验收标准。"),
+                L("The current question needs 3-5 options; cover alternatives, tradeoffs and edge cases.", "当前问题的选项数量不符合 3–5 个，请补充可选方案、取舍和边界情况。"),
+                L("Do not estimate time yet; clarify the goal first.", "先别估算时间，先确认目标。"),
+                L("Merge my previous answers and ask only what is still missing.", "合并我之前的回答，只问仍然缺失的信息。"),
+                L("I only have two hours; re-plan within that limit.", "我只有两小时，按这个限制重新规划。"),
+                L("If it is clear enough, produce the plan with assumptions.", "如果已经足够清楚，直接给计划并列出假设。"),
+            }
+            vim.ui.select(presets, { prompt = L("Message AI", "给 AI 发消息") }, function(choice)
+                if not choice then
+                    return
+                end
+                owner.chat_mode = true
+                select_context(true)
+                vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, { choice })
+                focus_input(true)
+            end)
         end)
         map(pop, "a", function()
             if ctl.state.status == "preparing" then
@@ -1106,6 +1343,40 @@ function M.open(opts)
             else
                 focus_input(true)
             end
+        end)
+        map(pop, "A", function()
+            if ctl.state.status ~= "preparing" then
+                return
+            end
+            local known = {}
+            for _, entry in ipairs(ctl.state.queue) do
+                known[entry.uuid] = true
+            end
+            local choices = {}
+            for _, task in ipairs(svc.store:list({ archived = false })) do
+                if
+                    task.kind ~= "notice"
+                    and not task.archived_at
+                    and (task.status == "todo" or task.status == "in_progress")
+                    and not known[task.sync_uuid]
+                then
+                    choices[#choices + 1] = task
+                end
+            end
+            vim.ui.select(choices, {
+                prompt = L("Add existing task to this planning session", "添加已有任务到本次规划"),
+                format_item = function(task)
+                    return string.format("[P%d] %s", task.priority or 3, task.title)
+                end,
+            }, function(task)
+                if not task then
+                    return
+                end
+                ctl:add_task(task.sync_uuid)
+                ctl:save()
+                select_context(true)
+                render()
+            end)
         end)
         map(pop, "M", function()
             assert(not ctl.busy, "Stop the active request before changing mode")
@@ -1159,6 +1430,7 @@ function M.open(opts)
         end)
         map(pop, "?", help)
         map(pop, "<F1>", help)
+        map(pop, "<C-p>", help)
         map(pop, "r", function()
             assert(not ctl.busy, "AI is still replying")
             if ctl.state.last_error then
@@ -1219,6 +1491,7 @@ function M.open(opts)
             owner.show_details = not owner.show_details
             render()
         end)
+        map(pop, "D", open_task_context)
         map(pop, "b", function()
             owner.queue_open = not owner.queue_open
             owner.tiny_view = nil
@@ -1377,7 +1650,38 @@ function M.open(opts)
             submit()
             return
         end
-        toggle()
+        local option = q.options[owner.option]
+        if not option then
+            owner.note_option = nil
+            focus_input(true)
+            return
+        end
+        local a = answer(round, q)
+        if q.multiple then
+            toggle()
+        else
+            a.selected = { [option.id] = true }
+            cache_later()
+        end
+        owner.option_positions[round.id .. ":" .. owner.tab] = owner.option
+        if owner.tab < #round.questions then
+            owner.tab = owner.tab + 1
+            owner.option = owner.option_positions[round.id .. ":" .. owner.tab] or 1
+            owner.note_option = nil
+            select_context(true)
+            render()
+            if valid(owner.questions) then
+                vim.api.nvim_set_current_win(owner.questions.winid)
+            end
+        else
+            owner.preview_from = { tab = owner.tab, option = owner.option }
+            owner.tab = #round.questions + 1
+            owner.note_option = nil
+            render()
+            if valid(owner.questions) then
+                vim.api.nvim_set_current_win(owner.questions.winid)
+            end
+        end
     end)
     owner.group = vim.api.nvim_create_augroup("TodoDaily" .. owner.timeline.bufnr, { clear = true })
     vim.api.nvim_create_autocmd("ModeChanged", { group = owner.group, callback = schedule_render })

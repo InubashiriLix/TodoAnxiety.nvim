@@ -212,7 +212,7 @@ function M.stream(opts, on_text, callback)
     local received = 0
     local error_body = ""
     local started = uv.hrtime()
-    local decoder = require("todo.ai.stream").new(on_text)
+    local decoder = opts.decoder or require("todo.ai.stream").new(on_text)
     local function read_headers()
         local stat = uv.fs_stat(headers)
         assert(stat and stat.size <= 65536, "invalid response headers")

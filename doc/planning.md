@@ -17,7 +17,7 @@ require('todo').setup({
     language = 'auto', -- 也可以单独设置 zh-CN / en
     planning = {
       max_rounds_per_item = 10, -- 同一任务、同一日期的硬上限
-      questions_per_round = 3,
+      questions_per_round = 4, -- 每轮 3-4 个相关问题，最大 4
       max_requests_per_item = 16, -- 检索、修复、收尾均计数
       max_requests_total = false, -- 默认：参与任务数 × 16 + 2
       stream = true,
@@ -34,9 +34,11 @@ require('todo').setup({
 })
 ```
 
-执行 `:Todo ai key` 粘贴密钥，输入不会显示。也可在 `:Todo ai settings`
-选择「粘贴 API Key」。密钥保存在
-`stdpath('data')/todo.nvim/credentials.json`，文件权限为 0600，不进入同步。
+首次进入 AI 规划时，如果没有可用密钥，会自动弹出 `:Todo ai setup`：
+选择 Provider、填写 Base URL / Model、隐藏输入 API Key。设置保存在本机
+`stdpath('data')/todo.nvim/ai.json` 和 `credentials.json`，权限 0600，不进入同步。
+`require('todo').setup({ ai = { ... } })` 的显式配置优先于本机设置。
+也可以执行 `:Todo ai key` 只更新密钥。
 显式配置的 `ai.api_key`、`ai.api_key_file` 优先；其余读取顺序为
 `DEEPSEEK_API_KEY` 环境变量、本机凭据、OpenCode 的
 `~/.local/share/opencode/auth.json`（`deepseek.key`）、已有
@@ -66,6 +68,17 @@ require('todo').setup({
 | `N` | 新建或编辑任务备注 |
 | `P` | 开始或恢复 AI 编排 |
 | `Q` | 让 AI 澄清当前任务 |
+| `Enter`（选项） | 确认当前选项并进入下一题 |
+| `Space`（选项） | 只勾选/取消，不跳题 |
+| `Tab`（选项） | 进入补充说明 |
+| `Tab` / `Enter`（补充说明） | 保存并返回选项 |
+| `h/l` / `Shift-Tab` | 上一题／下一题 |
+| `t` | 给 AI 发送自由指导（如“再追问我 3 个问题”） |
+| `T` | 选择有用的指导提示词 |
+| `D` | 打开当前任务原文、备注与今日计划 |
+| `d` | 在对话区展开/收起任务详情 |
+| `End` / `Ctrl-Alt-g` | 跳到最新回复 |
+| `Home` / `Ctrl-g` | 跳到顶部 |
 | `U` / `Ctrl-r` | 撤回／重做已保存的操作 |
 | `?` / `F1` | 当前页面的完整帮助 |
 
@@ -237,8 +250,37 @@ require('todo').setup({
 
 ## 其他 AI Provider
 
-第一版支持 Chat Completions 协议兼容服务，不支持 Anthropic 原生协议或 Responses API。
-`base_url` 填写包含版本前缀但不含 `/chat/completions` 的 HTTPS 地址。
+原生支持 DeepSeek、OpenAI Responses API、Anthropic Messages API，以及 Chat
+Completions 协议兼容服务。OpenAI/Anthropic 需要显式填写 `model`。
+
+```lua
+-- OpenAI 原生 Responses API
+require('todo').setup({
+  ai = {
+    enabled = true,
+    provider = 'openai',
+    base_url = 'https://api.openai.com/v1',
+    model = 'YOUR_MODEL',
+    api_key_env = 'OPENAI_API_KEY',
+  },
+})
+```
+
+```lua
+-- Anthropic 原生 Messages API
+require('todo').setup({
+  ai = {
+    enabled = true,
+    provider = 'anthropic',
+    base_url = 'https://api.anthropic.com',
+    model = 'YOUR_MODEL',
+    api_key_env = 'ANTHROPIC_API_KEY',
+  },
+})
+```
+
+`base_url` 填写包含版本前缀但不含 `/chat/completions`、`/responses` 或
+`/v1/messages` 的 HTTPS 地址。
 
 ```lua
 require('todo').setup({

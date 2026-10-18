@@ -25,6 +25,9 @@
 ## 环境要求
 
 - Neovim 0.10+
+- **Rust core**（`todo-core`）：强制依赖，没有 Lua fallback。安装后执行
+  `cargo build --release --manifest-path core/Cargo.toml`，或使用 release
+  产物；也可设置 `core.bin` / `$TODO_CORE_BIN`。
 - [`kkharji/sqlite.lua`](https://github.com/kkharji/sqlite.lua)
 - [`MunifTanjim/nui.nvim`](https://github.com/MunifTanjim/nui.nvim)
 - [`folke/which-key.nvim`](https://github.com/folke/which-key.nvim) v3（可选，
@@ -58,6 +61,7 @@ lazy.nvim 安装示例：
       language = "zh-CN",
     })
   end,
+  build = "cargo build --release --manifest-path core/Cargo.toml",
 }
 ```
 
@@ -421,10 +425,12 @@ CI 配置覆盖 Linux、macOS，以及 Neovim 0.10.4 和当前稳定版。
 `:Todo today` 打开独立于截止时间的今日执行清单；`:Todo plan` 打开逐项检查的每日规划工作区（Vim 输入、图片与流式回复），
 任务上按 `Q` 澄清描述。默认 plan 模式下，AI 修改先进入逐条审批，提交后 `U` 可整批撤回。
 
-在 setup 中开启 `ai.enabled = true`，再执行 `:Todo ai key` 隐藏输入密钥，或使用
-`DEEPSEEK_API_KEY`。本机凭据以 0600 权限保存，不参与同步，也支持读取已有
-`~/.deepseek-mcp/config.json`。`:Todo ai settings` 设置回复语言和人设。
-每个会话默认最多 10 个问题、20 次请求，并显示费用估算。
+在 setup 中开启 `ai.enabled = true`，再执行 `:Todo ai setup` 选择供应商并隐藏输入
+密钥；也可以只执行 `:Todo ai key`，或使用 `DEEPSEEK_API_KEY`。支持 DeepSeek、
+OpenAI Responses、Anthropic Messages 和 Chat Completions 兼容服务。OpenAI/
+Anthropic 需要显式填写模型。本机凭据以 0600 权限保存，不参与同步。
+`:Todo ai settings` 设置回复语言和人设。每个会话默认最多 10 轮问题、20 次请求，
+并显示费用估算。
 
 任务描述和 AI 回答支持粘贴图片，文件复制到插件管理目录。可选 Rust 单文件服务
 同步任务、今日计划、对话、图片和用量，无需 Docker。网络请求异步执行，有阶段、

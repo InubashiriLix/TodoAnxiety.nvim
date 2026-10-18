@@ -9,16 +9,19 @@ M.defaults = {
     read_half_down = { "<C-M-d>" },
     read_page_up = { "<C-M-b>" },
     read_page_down = { "<C-M-f>" },
-    read_latest = { "<C-M-g>" },
+    read_latest = { "<C-M-g>", "<End>" },
+    read_top = { "<C-g>", "<Home>" },
     maximize = { "+" },
-    previous_question = { "h", "<S-Tab>" },
-    next_question = { "l", "<Tab>" },
+    previous_question = { "h", "<S-Tab>", "<Left>" },
+    next_question = { "l", "<Right>" },
+    supplement = { "<Tab>" },
     select = { "<CR>" },
     toggle = { "<Space>" },
     preview = { "w" },
     edit_note = { "e" },
     input = { "i" },
-    return_to_choices = { "<CR>", "<Esc>" },
+    chat = { "t" },
+    return_to_choices = { "<CR>", "<Esc>", "<Tab>" },
 }
 function M.keys(action, options)
     options = options or require("todo.config").get().ui.daily_keys or {}
@@ -39,6 +42,8 @@ function M.label(action)
                 :gsub("<Space>", "Space")
                 :gsub("<S%-Tab>", "Shift-Tab")
                 :gsub("<Tab>", "Tab")
+                :gsub("<End>", "End")
+                :gsub("<Home>", "Home")
                 :gsub("<C%-M%-(.)>", "Ctrl-Alt-%1")
                 :gsub("<C%-(.)>", "Ctrl-%1")
         end, M.keys(action)),
@@ -100,7 +105,7 @@ function M.validate(options)
             assert(type(key) == "string" and key ~= "", "Empty key for ui.daily_keys." .. name)
             -- Return only exists in the editable composer; selection/preview only in read-only panes.
             local contexts = name == "return_to_choices" and { "input" }
-                or (name == "select" or name == "toggle" or name == "preview" or name == "edit_note" or name == "input" or name == "previous_question" or name == "next_question") and {
+                or (name == "select" or name == "toggle" or name == "preview" or name == "edit_note" or name == "input" or name == "chat" or name == "supplement" or name == "previous_question" or name == "next_question") and {
                     "choices",
                 }
                 or { "input", "choices" }

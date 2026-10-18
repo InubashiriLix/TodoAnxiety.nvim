@@ -7,6 +7,7 @@
 ```lua
 require('todo').setup({
   db_path = vim.fn.stdpath('data') .. '/todo.nvim/todo.db',
+  core = { bin = '' }, -- 必填的 Rust core；空值自动查找 core/target 或 $TODO_CORE_BIN
   language = 'zh-CN',
   ui = {
     default_mode = 'float',
@@ -32,7 +33,7 @@ require('todo').setup({
     persona = '帮助我形成可执行的清单，仅询问必要信息，收集足够信息后形成执行清单。',
     planning = {
       max_rounds_per_item = 10,
-      questions_per_round = 3,
+      questions_per_round = 4,
       max_requests_per_item = 16,
       max_requests_total = false, -- 默认参与任务数 × 16 + 2
       stream = true,

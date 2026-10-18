@@ -6,6 +6,7 @@ local store = require("todo.store").open(vim.fn.tempname() .. ".db")
 local ws = require("todo.workspace").new(store)
 local svc = require("todo.service").new(store)
 local task = assert(svc:create({ title = "Backend acceptance", description = "" }))
+require("todo.planning").new(ws, svc):add(task.sync_uuid, "2026-10-16")
 local calls = 0
 local ai = require("todo.ai").new(ws, svc, {
     transport = function(opts, cb)

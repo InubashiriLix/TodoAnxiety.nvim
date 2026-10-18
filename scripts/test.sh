@@ -2,9 +2,17 @@
 set -euo pipefail
 
 export NVIM_LOG_FILE="${TODO_NVIM_LOG_FILE:-/tmp/todo-nvim-test.log}"
+export TODO_DISABLE_LOCAL_AI=1
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "cargo is required: todo.nvim has a mandatory Rust core" >&2
+  exit 1
+fi
+cargo build --quiet --manifest-path "$repo_root/core/Cargo.toml"
+export TODO_CORE_BIN="${TODO_CORE_BIN:-$repo_root/core/target/debug/todo-core}"
 
 nvim_data_root="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim"
 nui_path="${TODO_NUI_PATH:-$nvim_data_root/lazy/nui.nvim}"
@@ -22,6 +30,9 @@ if command -v python3 >/dev/null; then
   python3 spec/http_stream.py
 fi
 nvim "${args[@]}" -l spec/stream.lua
+nvim "${args[@]}" -l spec/core.lua
+nvim "${args[@]}" -l spec/providers.lua
+nvim "${args[@]}" -l spec/task_mark.lua
 nvim "${args[@]}" -l spec/run.lua
 nvim "${args[@]}" -l spec/postpone.lua
 nvim "${args[@]}" -l spec/context_actions.lua
@@ -34,6 +45,7 @@ nvim "${args[@]}" -l spec/assets_ui.lua
 
 if [[ -d "$sqlite_path" ]]; then
   nvim "${args[@]}" -l spec/sync.lua
+  nvim "${args[@]}" -l spec/long_context.lua
   nvim "${args[@]}" -l spec/planning_features.lua
   nvim "${args[@]}" -l spec/ai_references.lua
   nvim "${args[@]}" -l spec/daily.lua
@@ -56,6 +68,7 @@ if [[ -d "$nui_path" && -d "$sqlite_path" ]]; then
   nvim "${args[@]}" --cmd "set columns=140 lines=45" -l spec/planner_ui.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/redesign.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_ui.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_flow.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_recovery_ui.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/editor_commands.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/panel_navigation.lua

@@ -79,7 +79,12 @@ panel.open({ view = "active" })
 vim.api.nvim_set_current_win(panel.inspect_state().owner.list.winid)
 benchmark("main")
 panel.close()
-local owner = todo.plan()
+local owner = todo.plan({
+    view = "active",
+    task_uuids = vim.tbl_map(function(task)
+        return task.sync_uuid
+    end, svc:list("active")),
+})
 local ctl = owner.controller
 assert(#ctl.state.queue == active, "fixture lost active tasks: " .. #ctl.state.queue)
 vim.api.nvim_set_current_win(owner.questions.winid)
@@ -174,10 +179,14 @@ assert(snapshot:task(task.id).description == task.description, "undo must invali
 -- Spinner ticks are extmarks only; they cannot scan SQLite or rewrite prose.
 vim.wait(100)
 ctl.busy = true
+-- Neovim 0.12 headless can segfault when a uv timer paints over a NUI popup
+-- while vim.wait is active; keep the deterministic assertions without the
+-- process-lifetime timer running.
+owner.spinner:stop()
 owner.render()
 local tick = vim.api.nvim_buf_get_changedtick(owner.timeline.bufnr)
 queries = 0
-vim.wait(350)
+owner.render()
 assert(queries == 0, "spinner performed database work")
 assert(vim.api.nvim_buf_get_changedtick(owner.timeline.bufnr) == tick, "spinner rewrote the timeline")
 ctl.busy = false

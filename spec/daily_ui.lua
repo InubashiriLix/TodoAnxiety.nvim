@@ -9,6 +9,8 @@ local todo = require("todo")
 local svc = todo._service()
 local ws = svc.store.workspace
 local task = assert(svc:create({ title = "Daily UI test", description = "Original" }))
+local planner = require("todo.planning").new(ws, svc)
+planner:add(task.sync_uuid)
 local ai = require("todo.ai").new(ws, svc, {
     transport = function(opts, cb)
         vim.defer_fn(function()
@@ -36,6 +38,7 @@ local ai = require("todo.ai").new(ws, svc, {
                                         options = {
                                             { id = "a", label = "A", description = "Description A" },
                                             { id = "b", label = "B" },
+                                            { id = "c", label = "C" },
                                         },
                                     },
                                 },
@@ -89,6 +92,11 @@ assert(
 )
 vim.wait(100)
 vim.api.nvim_set_current_win(o.questions.winid)
+-- Tab opens the supplement editor; Tab again saves and returns to options.
+press("<Tab>")
+assert(vim.api.nvim_get_current_win() == o.composer.winid, "Tab must open supplement")
+press("<Tab>")
+assert(vim.api.nvim_get_current_win() == o.questions.winid, "Tab in supplement must return to options")
 press("<Space>")
 press("e")
 local option_buf = o.composer.bufnr
@@ -148,7 +156,7 @@ o = todo.plan()
 assert(o.controller == ctl)
 assert(ctl.cache.rounds[ctl:item_id(ctl:current())].answers.q.notes.a == "Extra option information")
 ui.close()
--- Enter selects without advancing, and every question keeps its option cursor.
+-- Enter confirms and advances; Space toggles without advancing.
 local o2 = todo.plan()
 local ctl2 = o2.controller
 local round2 = ctl2.cache.rounds[ctl2:item_id(ctl2:current())]
@@ -163,14 +171,23 @@ o2.layout.update = function(...)
     return original_update(...)
 end
 press("j<CR>")
-assert(o2.tab == 1 and o2.option == 2, "Enter must not advance")
-press("l<CR>")
-assert(o2.tab == 2 and round2.answers.q2.selected.a, "Enter toggles multi-select")
-press("<CR>")
-assert(not round2.answers.q2.selected.a)
+assert(o2.tab == 2 and round2.answers.q.selected.b, "Enter must select and advance")
+press("<Space>")
+assert(o2.tab == 2 and round2.answers.q2.selected.a, "Space toggles without advancing")
+press("<Space>")
+assert(o2.tab == 2 and not round2.answers.q2.selected.a)
 press("h")
 assert(o2.tab == 1 and o2.option == 2, "restore per-question cursor")
 assert(layout_calls == 0, "question tabs must not rebuild layout")
+press("<CR>")
+assert(o2.tab == 2, "Enter advances")
+press("<Space>")
+assert(round2.answers.q2.selected.a, "Space selects on the new question")
+press("<CR>")
+assert(o2.tab == 3, "Enter on the last question opens preview")
+press("<Esc>")
+press("h")
+assert(o2.tab == 1 and o2.option == 2)
 press("e")
 vim.cmd("stopinsert")
 vim.api.nvim_buf_set_lines(o2.composer.bufnr, 0, -1, false, { "explicit return" })
