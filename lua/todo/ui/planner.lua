@@ -450,7 +450,12 @@ function M.chat(opts)
     end
     render()
     if opts.initial then
-        answer(opts.initial)
+        if opts.send_initial then
+            request = ai:send(s.id, opts.initial, {}, completed)
+            render()
+        else
+            answer(opts.initial)
+        end
     end
     return owner
 end

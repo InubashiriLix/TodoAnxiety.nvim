@@ -75,6 +75,8 @@ lazy.nvim 安装示例：
 :Todo                         " 打开活动任务浮窗
 :Todo open sidebar emergency " 在侧栏打开紧急任务视图
 :Todo add 编写发布说明        " 预填标题并打开新任务表单
+:Todo add ai 要联系银行        " 让 AI 追问并生成新任务草稿
+:Todo capture 零散想法         " AI 记录模式：先追问，再生成审批草稿
 :Todo notice 五分钟后洗澡    " 打开新 Notice 表单
 :Todo open notices           " 查看所有未归档 Notice
 :Todo tags                    " 打开标签管理面板

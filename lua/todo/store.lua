@@ -152,8 +152,10 @@ function M.open(path)
         error(err)
     end
     local store = setmetatable({ db = db, path = path }, M)
+    require("todo.core").request("core.db_open", { { path = path } })
     local initialized, init_error = pcall(require("todo.sync.store").initialize, store)
     if not initialized then
+        pcall(require("todo.core").request, "core.db_close", { path })
         db:close()
         error(init_error)
     end
@@ -165,6 +167,7 @@ function M:transaction(fn)
 end
 
 function M:close()
+    pcall(require("todo.core").request, "core.db_close", { self.path })
     if self.db and self.db:isopen() then
         self.db:close()
     end
@@ -229,8 +232,7 @@ function M:_hydrate(rows)
     return rows
 end
 
-function M:list(opts)
-    require("todo.performance").count("tasks.list")
+local function list_lua(self, opts)
     opts = opts or {}
     local predicate = opts.archived and "archived_at IS NOT NULL" or "archived_at IS NULL"
     if opts.kind then
@@ -239,6 +241,26 @@ function M:list(opts)
     local rows =
         self.db:eval("SELECT * FROM tasks WHERE " .. predicate .. " ORDER BY created_at, id", { kind = opts.kind })
     return self:_hydrate(rows)
+end
+
+local function get_lua(self, id)
+    local row = query_one(self.db, "SELECT * FROM tasks WHERE id = :id", { id = id })
+    if not row then
+        return nil
+    end
+    self:_hydrate({ row })
+    return row
+end
+
+function M:list(opts)
+    require("todo.performance").count("tasks.list")
+    opts = opts or {}
+    if transactions[self.db] then
+        return list_lua(self, opts)
+    end
+    return require("todo.core").request("core.tasks_list", {
+        { archived = opts.archived == true, kind = opts.kind, path = self.path },
+    })
 end
 
 function M:list_tags()
@@ -328,9 +350,10 @@ function M:stats()
 end
 
 function M:get(id)
-    require("todo.performance").count("tasks.get")
-    local row = query_one(self.db, "SELECT * FROM tasks WHERE id = :id", { id = id })
-    return row and self:_hydrate({ row })[1] or nil
+    if transactions[self.db] then
+        return get_lua(self, id)
+    end
+    return require("todo.core").request("core.tasks_get", { { id = tonumber(id), path = self.path } })
 end
 
 function M:_set_tags(task_id, tags)

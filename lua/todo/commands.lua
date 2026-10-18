@@ -51,7 +51,14 @@ function M.run(args)
             local words = split_words(rest)
             todo.toggle({ mode = words[1] })
         elseif command == "add" then
-            todo.add({ title = rest })
+            local ai = rest:match("^%s*ai%s+(.*)$")
+            if ai then
+                todo.capture(ai)
+            elseif vim.trim(rest) == "ai" then
+                todo.capture()
+            else
+                todo.add({ title = rest })
+            end
         elseif command == "image" then
             local buf = vim.api.nvim_get_current_buf()
             assert(

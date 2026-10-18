@@ -78,6 +78,8 @@ Run `:checkhealth todo` after installation.
 :Todo                         " open the active-task float
 :Todo open sidebar emergency " emergency view in the sidebar
 :Todo add Write release notes " prefill a new-task form
+:Todo add ai I need to call the bank " let AI clarify and draft a new task
+:Todo capture messy notes        " AI-assisted capture (asks questions, then draft review)
 :Todo notice Take a shower    " create a notice
 :Todo open notices            " list active notices
 :Todo tags                    " open the tag manager

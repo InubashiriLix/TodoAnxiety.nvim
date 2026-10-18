@@ -6,6 +6,7 @@
 
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDateTime, TimeZone};
 use rmpv::Value;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -49,6 +50,247 @@ fn map_i64(value: &Value, key: &str) -> Option<i64> {
 
 fn map_array<'a>(value: &'a Value, key: &str) -> Option<&'a Vec<Value>> {
     map_get(value, key).and_then(|v| v.as_array())
+}
+
+fn map_bool(value: &Value, key: &str) -> Option<bool> {
+    map_get(value, key).and_then(|v| v.as_bool())
+}
+
+static DB: std::sync::OnceLock<std::sync::Mutex<HashMap<String, rusqlite::Connection>>> =
+    std::sync::OnceLock::new();
+
+fn db_slot() -> &'static std::sync::Mutex<HashMap<String, rusqlite::Connection>> {
+    DB.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn opt_i64(row: &rusqlite::Row<'_>, name: &str) -> Option<i64> {
+    row.get::<_, Option<i64>>(name).ok().flatten()
+}
+
+fn opt_string(row: &rusqlite::Row<'_>, name: &str) -> Option<String> {
+    row.get::<_, Option<String>>(name).ok().flatten()
+}
+
+fn tags_value(conn: &rusqlite::Connection, task_id: i64) -> Value {
+    let mut statement = match conn.prepare(
+        "SELECT tags.name FROM tags JOIN task_tags ON task_tags.tag_id=tags.id \
+         WHERE task_tags.task_id=? ORDER BY lower(tags.name), tags.name",
+    ) {
+        Ok(value) => value,
+        Err(_) => return Value::Array(vec![]),
+    };
+    let rows = statement
+        .query_map([task_id], |row| row.get::<_, String>(0))
+        .ok()
+        .map(|rows| rows.filter_map(Result::ok).map(Value::from).collect())
+        .unwrap_or_default();
+    Value::Array(rows)
+}
+
+fn reminder_value(conn: &rusqlite::Connection, task_id: i64) -> Option<Value> {
+    let mut statement = conn
+        .prepare("SELECT * FROM reminders WHERE task_id=?")
+        .ok()?;
+    let row = statement
+        .query_row([task_id], |row| {
+            let recurrence_type: String = row.get("recurrence_type")?;
+            let recurrence_every: i64 = row.get("recurrence_every")?;
+            let recurrence_unit: Option<String> = row.get("recurrence_unit")?;
+            let weekdays: String = row.get("weekdays")?;
+            let weekdays_value: Vec<Value> = weekdays
+                .split(',')
+                .filter_map(|value| value.trim().parse::<i64>().ok())
+                .map(Value::from)
+                .collect();
+            let mut entries = vec![
+                (Value::from("enabled"), Value::from(row.get::<_, i64>("enabled")? == 1)),
+                (
+                    Value::from("repeat_interval_seconds"),
+                    Value::from(row.get::<_, i64>("repeat_interval_seconds")?),
+                ),
+                (
+                    Value::from("scheduled_at"),
+                    Value::from(row.get::<_, i64>("scheduled_at")?),
+                ),
+                (
+                    Value::from("next_reminder_at"),
+                    Value::from(row.get::<_, i64>("next_reminder_at")?),
+                ),
+                (
+                    Value::from("occurrence_started_at"),
+                    Value::from(row.get::<_, i64>("occurrence_started_at")?),
+                ),
+                (
+                    Value::from("recurrence"),
+                    Value::Map(vec![
+                        (Value::from("kind"), Value::from(recurrence_type)),
+                        (Value::from("every"), Value::from(recurrence_every)),
+                        (
+                            Value::from("unit"),
+                            recurrence_unit.map(Value::from).unwrap_or(Value::Nil),
+                        ),
+                        (Value::from("weekdays"), Value::Array(weekdays_value)),
+                    ]),
+                ),
+            ];
+            for key in ["snoozed_until", "last_reminded_at"] {
+                if let Some(value) = opt_i64(row, key) {
+                    entries.push((Value::from(key), Value::from(value)));
+                }
+            }
+            Ok(Value::Map(entries))
+        })
+        .ok()?;
+    Some(row)
+}
+
+fn task_value(conn: &rusqlite::Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let id = row.get::<_, i64>("id")?;
+    let mut entries = vec![
+        (Value::from("id"), Value::from(id)),
+        (Value::from("title"), Value::from(row.get::<_, String>("title")?)),
+        (
+            Value::from("description"),
+            Value::from(row.get::<_, String>("description")?),
+        ),
+        (Value::from("status"), Value::from(row.get::<_, String>("status")?)),
+        (Value::from("priority"), Value::from(row.get::<_, i64>("priority")?)),
+        (
+            Value::from("created_at"),
+            Value::from(row.get::<_, i64>("created_at")?),
+        ),
+        (
+            Value::from("updated_at"),
+            Value::from(row.get::<_, i64>("updated_at")?),
+        ),
+        (
+            Value::from("kind"),
+            Value::from(row.get::<_, String>("kind").unwrap_or_else(|_| "task".to_string())),
+        ),
+        (Value::from("tags"), tags_value(conn, id)),
+    ];
+    for key in ["due_date", "due_time", "sync_uuid", "sync_revision"] {
+        if let Some(value) = opt_string(row, key) {
+            entries.push((Value::from(key), Value::from(value)));
+        }
+    }
+    for key in ["completed_at", "archived_at"] {
+        if let Some(value) = opt_i64(row, key) {
+            entries.push((Value::from(key), Value::from(value)));
+        }
+    }
+    if let Some(reminder) = reminder_value(conn, id) {
+        entries.push((Value::from("reminder"), reminder));
+    }
+    Ok(Value::Map(entries))
+}
+
+fn tasks_list(params: &[Value]) -> Value {
+    let slot = db_slot();
+    let guard = match slot.lock() {
+        Ok(value) => value,
+        Err(_) => return error("database lock poisoned"),
+    };
+    let options = params.first().cloned().unwrap_or(Value::Nil);
+    let Some(path) = map_string(&options, "path") else {
+        return error("database path required");
+    };
+    let Some(conn) = guard.get(&path) else {
+        return error("database is not open");
+    };
+    let archived = map_bool(&options, "archived").unwrap_or(false);
+    let mut sql = String::from(
+        "SELECT * FROM tasks WHERE archived_at IS ",
+    );
+    sql.push_str(if archived { "NOT NULL" } else { "NULL" });
+    let kind = map_string(&options, "kind");
+    if kind.is_some() {
+        sql.push_str(" AND kind=?");
+    }
+    sql.push_str(" ORDER BY created_at, id");
+    let mut statement = match conn.prepare(&sql) {
+        Ok(value) => value,
+        Err(err) => return error(err.to_string()),
+    };
+    let mapped = if let Some(kind) = kind {
+        statement
+            .query_map(rusqlite::params![kind], |row| task_value(conn, row))
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+    } else {
+        statement
+            .query_map([], |row| task_value(conn, row))
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+    };
+    match mapped {
+        Ok(rows) => reply(true, Value::Array(rows)),
+        Err(err) => error(err.to_string()),
+    }
+}
+
+fn task_get(params: &[Value]) -> Value {
+    let options = params.first().cloned().unwrap_or(Value::Nil);
+    let Some(id) = map_i64(&options, "id") else {
+        return error("task id required");
+    };
+    let Some(path) = map_string(&options, "path") else {
+        return error("database path required");
+    };
+    let slot = db_slot();
+    let guard = match slot.lock() {
+        Ok(value) => value,
+        Err(_) => return error("database lock poisoned"),
+    };
+    let Some(conn) = guard.get(&path) else {
+        return error("database is not open");
+    };
+    let mut statement = match conn.prepare("SELECT * FROM tasks WHERE id=?") {
+        Ok(value) => value,
+        Err(err) => return error(err.to_string()),
+    };
+    match statement.query_row([id], |row| task_value(conn, row)) {
+        Ok(value) => reply(true, value),
+        Err(rusqlite::Error::QueryReturnedNoRows) => reply(true, Value::Nil),
+        Err(err) => error(err.to_string()),
+    }
+}
+
+fn db_open(params: &[Value]) -> Value {
+    let options = params.first().cloned().unwrap_or(Value::Nil);
+    let Some(path) = map_string(&options, "path") else {
+        return error("database path required");
+    };
+    let connection = match rusqlite::Connection::open(&path) {
+        Ok(value) => value,
+        Err(err) => return error(err.to_string()),
+    };
+    let _ = connection.execute("PRAGMA foreign_keys=ON", []);
+    let _ = connection.execute("PRAGMA journal_mode=WAL", []);
+    let _ = connection.execute("PRAGMA busy_timeout=3000", []);
+    let slot = db_slot();
+    match slot.lock() {
+        Ok(mut guard) => {
+            guard.insert(path.clone(), connection);
+            reply(
+                true,
+                Value::Map(vec![
+                    (Value::from("path"), Value::from(path)),
+                    (Value::from("open"), Value::from(true)),
+                ]),
+            )
+        }
+        Err(_) => error("database lock poisoned"),
+    }
+}
+
+fn db_close(params: &[Value]) -> Value {
+    if let Ok(mut guard) = db_slot().lock() {
+        if let Some(path) = params.first().and_then(as_str) {
+            guard.remove(path);
+        } else {
+            guard.clear();
+        }
+    }
+    reply(true, Value::from(true))
 }
 
 fn reply(ok: bool, value: Value) -> Value {
@@ -305,6 +547,10 @@ fn rule_value(rule: &Rule) -> Value {
 
 fn handle(method: &str, params: &[Value]) -> Value {
     match method {
+        "core.db_open" => db_open(params),
+        "core.db_close" => db_close(params),
+        "core.tasks_list" => tasks_list(params),
+        "core.tasks_get" => task_get(params),
         "core.hello" => reply(
             true,
             Value::Map(vec![

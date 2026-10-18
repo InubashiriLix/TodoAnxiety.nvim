@@ -390,7 +390,7 @@ function M.capture(text)
     end
     require("todo.ui.ai_setup").ensure(function(ok)
         if ok then
-            require("todo.ui.planner").chat({ scope = "capture", extended = true, initial = text })
+            require("todo.ui.planner").chat({ scope = "capture", extended = true, initial = text, send_initial = true })
         end
     end)
 end
