@@ -47,6 +47,7 @@ if [[ -d "$sqlite_path" ]]; then
   nvim "${args[@]}" -l spec/sync.lua
   nvim "${args[@]}" -l spec/long_context.lua
   nvim "${args[@]}" -l spec/routines.lua
+  nvim "${args[@]}" -l spec/merge.lua
   nvim "${args[@]}" -l spec/capture.lua
   nvim "${args[@]}" -l spec/planning_features.lua
   nvim "${args[@]}" -l spec/ai_references.lua

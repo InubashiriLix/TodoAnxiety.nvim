@@ -49,25 +49,10 @@ local function pad(text, width)
 end
 
 function M.card(task, width, reason, opts)
-    if task.kind == "notice" then
-        local prefix = "󰀠  "
-        local title = M.truncate(task.title, math.max(1, width - vim.fn.strdisplaywidth(prefix)))
-        local metadata = {}
-        if task.reminder then
-            metadata[#metadata + 1] = os.date("%Y-%m-%d %H:%M", task.reminder.next_reminder_at)
-            metadata[#metadata + 1] = require("todo.duration").format(task.reminder.repeat_interval_seconds)
-            metadata[#metadata + 1] = require("todo.recurrence").label(task.reminder.recurrence)
-        end
-        for _, tag in ipairs(task.tags or {}) do
-            metadata[#metadata + 1] = "#" .. tag
-        end
-        return prefix .. title, "    " .. M.truncate(table.concat(metadata, " · "), math.max(1, width - 4))
-    end
-
     opts = opts or {}
     local mark = require("todo.ui.task_mark")
     local done = mark.done(task)
-    local icon = status_icons[task.status] or "?"
+    local icon = task.kind == "notice" and "󰀠" or (status_icons[task.status] or "?")
     local badge = string.format("[P%d]", task.priority)
     local left_group = mark.left_group(task, opts.plan_state)
     local ai_group = done and nil or mark.ai_group(opts.ai_selected)

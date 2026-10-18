@@ -484,7 +484,7 @@ local function planner_action(action, role)
         if action == "plan" then
             local scope = {}
             for _, task in ipairs(state.tasks or {}) do
-                if task.kind ~= "notice" and (task.status == "todo" or task.status == "in_progress") then
+                if task.status == "todo" or task.status == "in_progress" then
                     scope[#scope + 1] = task.sync_uuid
                 end
             end
@@ -534,9 +534,7 @@ local function planner_action(action, role)
                 planner:change(date, task.sync_uuid, false)
             else
                 assert(
-                    task.kind ~= "notice"
-                        and not task.archived_at
-                        and (task.status == "todo" or task.status == "in_progress"),
+                    not task.archived_at and (task.status == "todo" or task.status == "in_progress"),
                     "Only active tasks can be added"
                 )
                 planner:add(task.sync_uuid, date)
@@ -713,7 +711,7 @@ local function today_apply(motion, count, role)
     local ok, err = pcall(function()
         planner:transaction(all_present and "Remove today range" or "Add today range", function()
             for _, task in ipairs(tasks) do
-                if task.kind ~= "notice" and not task.archived_at and (task.status == "todo" or task.status == "in_progress") then
+                if not task.archived_at and (task.status == "todo" or task.status == "in_progress") then
                     if all_present then
                         if present[task.sync_uuid] then
                             planner:change(date, task.sync_uuid, false)
@@ -791,7 +789,6 @@ local function panel_context(role)
             item
             or (
                 not task.archived_at
-                and task.kind ~= "notice"
                 and (task.status == "todo" or task.status == "in_progress")
             )
         then
@@ -2393,9 +2390,13 @@ function M.open(opts)
         M.close()
     end
     highlights.setup()
+    local previous_view = state.view
     state.mode = opts.mode or config.get().ui.default_mode
     state.view = opts.view or config.get().ui.default_view
     state.filters = opts.filters or state.filters or {}
+    if opts.selected_id == nil and opts.view and previous_view and opts.view ~= previous_view then
+        state.selected_id = nil
+    end
     state.selected_id = opts.selected_id or state.selected_id
     -- Header height depends on the tab counts, so read stats before laying out.
     local ok, stats = pcall(function()

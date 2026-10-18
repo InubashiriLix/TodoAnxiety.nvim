@@ -157,7 +157,7 @@ function M:refresh()
         by_uuid[item.task_uuid] = item
     end
     for _, task in ipairs(self.service.store:list({ archived = false })) do
-        if task.kind ~= "notice" and (task.status == "todo" or task.status == "in_progress") then
+        if task.status == "todo" or task.status == "in_progress" then
             tasks[task.sync_uuid] = task
         end
     end
@@ -244,7 +244,7 @@ function M:add_task(uuid)
             break
         end
     end
-    assert(task and task.kind ~= "notice" and not task.archived_at, "Only active tasks can be added")
+    assert(task and not task.archived_at, "Only active tasks can be added")
     assert(task.status == "todo" or task.status == "in_progress", "Only unfinished tasks can be added")
     for _, entry in ipairs(self.state.queue) do
         if entry.uuid == uuid then

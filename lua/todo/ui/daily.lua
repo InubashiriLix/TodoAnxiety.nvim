@@ -1355,8 +1355,7 @@ function M.open(opts)
             local choices = {}
             for _, task in ipairs(svc.store:list({ archived = false })) do
                 if
-                    task.kind ~= "notice"
-                    and not task.archived_at
+                    not task.archived_at
                     and (task.status == "todo" or task.status == "in_progress")
                     and not known[task.sync_uuid]
                 then

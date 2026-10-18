@@ -1500,7 +1500,7 @@ if sqlite_ok then
         }))
         eq(notice.kind, "notice")
         eq(notice.reminder.scheduled_at, notice_now + 300)
-        eq(service:stats(), { active = 2, emergency = 0, notices = 1, archived = 0 })
+        eq(service:stats(), { active = 3, emergency = 1, notices = 1, archived = 0 })
         eq(service:due_reminders(notice_now + 299), {})
         eq(service:due_reminders(notice_now + 300)[1].id, notice.id)
         local reminded = assert(service:mark_reminded(notice.id, notice_now + 300))

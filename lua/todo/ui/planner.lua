@@ -56,6 +56,14 @@ local function surface(title, opts)
         border = { style = "none" },
         win_options = { wrap = false, winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
     })
+    local composer = opts.composer
+            and Popup({
+                enter = false,
+                border = { style = "rounded", text = { top = " " .. L("Message", "消息") .. " ", top_align = "left" } },
+                buf_options = { buftype = "nofile", bufhidden = "hide", swapfile = false, modifiable = true },
+                win_options = { wrap = true, winhighlight = "Normal:NormalFloat,FloatBorder:TodoBorder" },
+            })
+        or nil
     local detail = opts.split
             and Popup({
                 border = {
@@ -76,6 +84,9 @@ local function surface(title, opts)
                 )
             or Layout.Box(pop, { grow = 1 })
         local boxes = { main }
+        if composer and size.height >= 12 then
+            boxes[#boxes + 1] = Layout.Box(composer, { size = 5 })
+        end
         if size.height >= 9 then
             boxes[#boxes + 1] = Layout.Box(footer, { size = 2 })
         end
@@ -84,7 +95,7 @@ local function surface(title, opts)
     local geometry_config, box = geometry()
     local layout = Layout(geometry_config, box)
     layout:mount()
-    local owner = { popup = pop, detail = detail, footer = footer, layout = layout, closed = false }
+    local owner = { popup = pop, detail = detail, footer = footer, composer = composer, layout = layout, closed = false }
     function owner.close()
         if owner.closed then
             return
@@ -97,6 +108,9 @@ local function surface(title, opts)
         layout:unmount()
         if detail then
             pcall(detail.unmount, detail)
+        end
+        if composer then
+            pcall(composer.unmount, composer)
         end
         pcall(footer.unmount, footer)
         if current == owner then
@@ -274,14 +288,14 @@ function M.chat(opts)
     opts = opts or {}
     local ws, svc, planner, ai = dependencies()
     local s = opts.session_id and ai:resume(opts.session_id) or ai:start(opts)
-    local owner = surface(L("AI conversation", "AI 对话"), { split = true })
+    local owner = surface(L("AI conversation", "AI 对话"), { split = false, composer = true })
     local request
     local function render()
         s = ai:resume(s.id)
         local usage = ai:usage(s.id)
         local lines = {
             string.format(
-                "%s · %s  %d/%d %s · %d/%d API · %s",
+                "%s · %s · %d/%d %s · %d/%d API · %s",
                 s.scope,
                 s.date,
                 s.questions,
@@ -289,22 +303,8 @@ function M.chat(opts)
                 L("rounds", "轮"),
                 s.requests,
                 s.max_requests,
-                usage.unknown > 0 and L("Cost unknown (partial estimate)", "费用未知（仅部分估算）")
-                    or string.format("~$%.6f", usage.usd)
+                usage.unknown > 0 and L("cost unknown", "费用未知") or string.format("~$%.5f", usage.usd)
             ),
-            L(
-                "a Answer  g Draft now  v Review  s Skip  E Extended  + Allow questions  c Cancel request",
-                "a 回答  g 生成草稿  v 审批  s 跳过  E 扩展修改  + 增加提问额度  c 取消请求"
-            ),
-            L(
-                "Ctrl-v pastes images in the answer editor. Nothing applies before review.",
-                "回答编辑器中 Ctrl-v 粘贴图片；审批提交前不修改任务。"
-            ),
-            L("Extended: ", "扩展修改：")
-                .. tostring(s.extended)
-                .. " · "
-                .. L("Text only: ", "仅文字：")
-                .. tostring(s.text_only == true),
             "",
         }
         for _, msg in ipairs(s.messages) do
@@ -319,6 +319,9 @@ function M.chat(opts)
             lines[#lines + 1] = "Error: " .. s.last_error
         end
         owner.write(lines)
+        if vim.api.nvim_win_is_valid(owner.popup.winid) then
+            vim.api.nvim_win_set_cursor(owner.popup.winid, { vim.api.nvim_buf_line_count(owner.popup.bufnr), 0 })
+        end
         owner.write_detail({
             "# " .. L("Conversation", "对话状态"),
             "",
@@ -357,6 +360,35 @@ function M.chat(opts)
         end
         render()
     end
+    local function composer_text()
+        return table.concat(vim.api.nvim_buf_get_lines(owner.composer.bufnr, 0, -1, false), "\n")
+    end
+    local function focus_composer(initial)
+        if initial then
+            vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, vim.split(initial, "\n", { plain = true }))
+        end
+        vim.api.nvim_set_current_win(owner.composer.winid)
+        vim.cmd("startinsert")
+    end
+    local function send_composer()
+        if ai.active[s.id] and ai.active[s.id].running then
+            vim.notify(L("AI is replying", "AI 正在回复"), vim.log.levels.WARN)
+            return
+        end
+        local text = composer_text()
+        if vim.trim(text) == "" then
+            return
+        end
+        vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, { "" })
+        request = ai:send(s.id, text, {
+            on_delta = function(partial)
+                s.partial = partial
+                render()
+            end,
+        }, completed)
+        s.partial = nil
+        render()
+    end
     local function answer(initial)
         s = ai:resume(s.id)
         if not initial and s.round and s.round.status == "pending" then
@@ -365,31 +397,54 @@ function M.chat(opts)
         if ai.active[s.id] and ai.active[s.id].running then
             return
         end
-        local images = {}
-        editor(
-            L("Answer AI", "回答 AI"),
-            initial or "",
-            function(text)
-                request = ai:send(s.id, text, { attachments = images }, completed)
-                if not owner.closed then
-                    render()
+        if owner.composer then
+            focus_composer(initial)
+        else
+            local images = {}
+            editor(
+                L("Answer AI", "回答 AI"),
+                initial or "",
+                function(text)
+                    request = ai:send(s.id, text, { attachments = images }, completed)
+                    if not owner.closed then
+                        render()
+                    end
+                end,
+                svc.store,
+                function(a)
+                    images[#images + 1] = a.hash
                 end
-            end,
-            svc.store,
-            function(a)
-                images[#images + 1] = a.hash
-            end
-        )
+            )
+        end
     end
     owner.map("a", function()
         answer()
     end)
     owner.map("i", function()
-        answer()
+        if owner.composer then
+            focus_composer()
+        else
+            answer()
+        end
     end)
     owner.map("<CR>", function()
         answer()
     end)
+    if owner.composer then
+        for _, key in ipairs({ "<CR>" }) do
+            vim.keymap.set("n", key, send_composer, { buffer = owner.composer.bufnr, silent = true })
+            vim.keymap.set("i", key, function()
+                vim.cmd("stopinsert")
+                send_composer()
+            end, { buffer = owner.composer.bufnr, silent = true })
+        end
+        vim.keymap.set({ "i" }, "<S-CR>", "<CR>", { buffer = owner.composer.bufnr, silent = true })
+        vim.keymap.set({ "i" }, "<C-J>", "<CR>", { buffer = owner.composer.bufnr, silent = true })
+        vim.keymap.set("n", "<Esc>", function()
+            vim.api.nvim_set_current_win(owner.popup.winid)
+        end, { buffer = owner.composer.bufnr, silent = true })
+        vim.keymap.set("n", "q", owner.close, { buffer = owner.composer.bufnr, silent = true })
+    end
     owner.map("s", function()
         request =
             ai:send(s.id, L("Skip this question; mark unknown.", "跳过这个问题，标为未知。"), {}, completed)
@@ -434,6 +489,22 @@ function M.chat(opts)
         ws:put("conversation", s.id, s)
         render()
     end)
+    if owner.composer then
+        vim.keymap.set("n", "V", safe(function()
+            assert(not ai.active[s.id], "request running")
+            s = ai:resume(s.id)
+            s.text_only = not s.text_only
+            ws:put("conversation", s.id, s)
+            render()
+        end), { buffer = owner.composer.bufnr, silent = true })
+        vim.keymap.set("n", "E", safe(function()
+            assert(not ai.active[s.id], "request running")
+            s = ai:resume(s.id)
+            s.extended = not s.extended
+            ws:put("conversation", s.id, s)
+            render()
+        end), { buffer = owner.composer.bufnr, silent = true })
+    end
     help(owner, {
         { key = "a / i", label = L("Answer with text/images", "回答文字或图片") },
         { key = "g", label = L("Generate draft now", "立即生成草稿") },
@@ -451,7 +522,13 @@ function M.chat(opts)
     render()
     if opts.initial then
         if opts.send_initial then
-            request = ai:send(s.id, opts.initial, {}, completed)
+            request = ai:send(s.id, opts.initial, {
+                on_delta = function(partial)
+                    s.partial = partial
+                    render()
+                end,
+            }, completed)
+            s.partial = nil
             render()
         else
             answer(opts.initial)
@@ -1013,6 +1090,24 @@ function M.balance()
     query()
     return owner
 end
+function M.clarify(id)
+    local ws, svc = dependencies()
+    local task = assert(svc.store:get(id), "task not found")
+    local latest
+    for _, record in ipairs(ws:list("conversation")) do
+        local value = record.value
+        if value.scope == "clarify" and value.task_uuid == task.sync_uuid then
+            if not latest or (value.created_at or 0) > (latest.value.created_at or 0) then
+                latest = record
+            end
+        end
+    end
+    if latest then
+        return M.chat({ session_id = latest.key })
+    end
+    return M.chat({ task_id = id })
+end
+
 function M.sessions(opts)
     local ws, svc = dependencies()
     local target = opts.task_id and svc.store:get(opts.task_id)

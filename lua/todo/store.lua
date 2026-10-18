@@ -330,9 +330,9 @@ function M:stats()
         self.db,
         [[
     SELECT
-      SUM(CASE WHEN archived_at IS NULL AND kind = 'task' THEN 1 ELSE 0 END) AS active,
+      SUM(CASE WHEN archived_at IS NULL AND kind IN ('task','notice') THEN 1 ELSE 0 END) AS active,
       SUM(CASE WHEN archived_at IS NULL
-        AND kind = 'task'
+        AND kind IN ('task','notice')
         AND status IN ('todo', 'in_progress')
         AND (due_date IS NOT NULL OR priority <= 1)
         THEN 1 ELSE 0 END) AS emergency,

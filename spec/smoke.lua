@@ -36,7 +36,7 @@ vim.cmd("Todo open float emergency")
 vim.wait(30)
 assert(panel.is_open(), "dashboard did not open")
 assert(panel.current_task().id == task.id, "created task is not selected")
-assert(panel.inspect_state().stats.emergency == 1, "emergency count is incorrect")
+assert(panel.inspect_state().stats.emergency == 2, "emergency count is incorrect")
 vim.cmd("Todo add 从命令打开表单")
 assert(
     vim.wait(100, function()

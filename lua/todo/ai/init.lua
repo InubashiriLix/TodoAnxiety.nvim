@@ -170,7 +170,6 @@ function M:context(s)
                 and s.scope ~= "daily_item"
                 and s.scope ~= "update"
                 and s.scope ~= "capture"
-                and t.kind ~= "notice"
                 and (t.status == "todo" or t.status == "in_progress")
                 and (not s.candidate_uuids or s.candidate_uuids[t.sync_uuid])
             )

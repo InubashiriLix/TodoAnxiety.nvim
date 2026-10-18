@@ -245,10 +245,6 @@ function M:list(view, filters, now)
         tasks = vim.tbl_filter(function(task)
             return task.kind == "notice"
         end, tasks)
-    elseif view ~= "archived" then
-        tasks = vim.tbl_filter(function(task)
-            return task.kind ~= "notice"
-        end, tasks)
     end
     if regrouped[view] then
         tasks = open_only(tasks)
@@ -475,12 +471,9 @@ function M:stats()
     end
     local active = self.store:list({ archived = false })
     local archived = self.store:list({ archived = true })
-    local tasks = vim.tbl_filter(function(task)
-        return task.kind ~= "notice"
-    end, active)
     return {
-        active = #tasks,
-        emergency = #urgency.sort(tasks),
+        active = #active,
+        emergency = #urgency.sort(active),
         archived = #archived,
         notices = #vim.tbl_filter(function(task)
             return task.kind == "notice"

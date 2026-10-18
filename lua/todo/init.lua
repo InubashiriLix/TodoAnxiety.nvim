@@ -407,7 +407,11 @@ function M.revise(id)
     end)
 end
 function M.clarify(id)
-    require("todo.ui.planner").sessions({ task_id = id })
+    require("todo.ui.ai_setup").ensure(function(ok)
+        if ok then
+            require("todo.ui.planner").clarify(id)
+        end
+    end)
 end
 function M.ai_usage()
     local u = M._ai():usage()
