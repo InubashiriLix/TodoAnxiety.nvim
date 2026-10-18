@@ -13,3 +13,6 @@ cache/
 .cargo/
 core/target/
 server/target/
+
+# screenshot render cache
+scripts/screenshots/.demo/

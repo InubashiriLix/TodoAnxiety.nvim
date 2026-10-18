@@ -1,26 +1,70 @@
 # todo.nvim
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+[![Tests](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/test.yml/badge.svg)](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/test.yml)
+[![Rust core](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/core.yml/badge.svg)](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/core.yml)
+[![Rust sync server](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/server.yml/badge.svg)](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/server.yml)
+[![Release](https://img.shields.io/github/v/release/InubashiriLix/TodoAnxiety.nvim?label=release)](https://github.com/InubashiriLix/TodoAnxiety.nvim/releases)
 ![Neovim](https://img.shields.io/badge/Neovim-0.10%2B-blue?logo=neovim)
 ![License](https://img.shields.io/badge/license-WTFPL-blue)
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+**An AI-native, Rust-powered Neovim task workspace that syncs across devices.**
 
-A focused, local task manager for Neovim with a responsive dashboard, structured
-task forms, and SQLite persistence. Tasks can be ranked by a transparent
-combination of deadline and priority, so the emergency view answers “what
-should I do next?”
+Tasks, notices, routines, AI planning, images, and multi-device sync in one
+keyboard-driven workflow. AI turns vague input into reviewable drafts; the Rust
+core keeps urgency, duration, and recurrence deterministic.
 
-<https://github.com/user-attachments/assets/2d69b477-6317-413d-8381-6ce3469251cc>
+![todo.nvim dashboard](assets/screenshots/active-en.png)
+
+## Why todo.nvim
+
+Most Neovim TODO plugins solve “recording.” todo.nvim tries to solve “deciding
+what is next, then actually doing it.”
+
+- **AI is part of the workflow**: capture, create, revise, clarify, and daily
+  planning each have a dedicated entry point. AI can ask questions, offer
+  choices, and read sources, but nothing is written before approval.
+- **Explainable ranking**: the Rust core owns urgency, duration, recurrence, and
+  task reads, so the UI can explain why a task is at the top.
+- **Tasks and reminders are one system**: notices appear in normal task views,
+  Today, and AI planning. Completing an occurrence advances the next one.
+- **Local-first, optional sync**: SQLite stays on your machine. Git sync talks
+  to the network only during `:Todo sync`; the single-binary Rust server is
+  optional.
+- **Built for the keyboard**: eight views, folds, search and filters, contextual
+  hints, three-row cards, inline images, and scrollable help.
+
+## Feature overview
+
+| Capability | What you get |
+| --- | --- |
+| AI workspace | `capture` / `add ai` capture, `revise` edits, `Q` clarification, `plan` sequential review, `today` execution |
+| Reviewable AI | question options, per-option notes, sourced memory, draft approval, batch `U` undo, cost estimates |
+| Multiple providers | DeepSeek, OpenAI Responses, Anthropic Messages, and OpenAI-compatible services |
+| Permissions and sandbox | scoped source reads, command approval, read-only sandbox, redacted diagnostics |
+| Rust core | required; urgency, duration, recurrence, and task reads |
+| Routines | daily, weekdays, selected weekdays, and fixed intervals; templates create normal task instances |
+| Notices | sound, forced focus, snooze, postpone, and missed-reminder catch-up |
+| Eight views | Today, Active, Emergency, By level, By time left, By tag, Notices, Archived |
+| Task UI | three-row cards, left/right urgency bars, AI marks, folds, search, filters, undo/redo |
+| Sync | manual Git sync, UUIDs, conflict merge, attachments, optional Rust server |
+| Engineering | SQLite, async networking, Neovim 0.10.4/stable CI, four-target core build |
 
 ## Contents
 
+- [Why todo.nvim](#why-todonvim)
+- [Feature overview](#feature-overview)
 - [Requirements](#requirements)
 - [Usage](#usage)
+- [Screenshots](#screenshots)
+- [AI workspace](#ai-workspace)
 - [Dashboard and form](#dashboard-and-form)
 - [Configuration](#configuration)
 - [Multi-device sync](#multi-device-sync)
 - [Emergency ranking](#emergency-ranking)
 - [Data and lifecycle](#data-and-lifecycle)
+- [Scope and limits](#scope-and-limits)
 - [Development](#development)
 
 ## Requirements
@@ -77,12 +121,19 @@ Run `:checkhealth todo` after installation.
 ```vim
 :Todo                         " open the active-task float
 :Todo open sidebar emergency " emergency view in the sidebar
+:Todo today                   " open today's execution queue
+:Todo plan                    " open AI daily planning
 :Todo add Write release notes " prefill a new-task form
 :Todo add ai I need to call the bank " let AI clarify and draft a new task
-:Todo capture messy notes        " AI-assisted capture (asks questions, then draft review)
+:Todo capture messy notes        " AI-assisted capture (questions, then draft review)
+:Todo revise 42                " ask AI to update task 42 after approval
+:Todo clarify 42               " ask AI to clarify task 42
 :Todo notice Take a shower    " create a notice
+:Todo routines                " manage recurring routines
 :Todo open notices            " list active notices
 :Todo tags                    " open the tag manager
+:Todo ai setup                " configure provider, model, and key
+:Todo diagnostics             " inspect redacted diagnostics
 :Todo done 42                " complete task 42
 :Todo archive 42             " archive while keeping the task recoverable
 :Todo delete 42              " permanently delete an archived task
@@ -92,12 +143,21 @@ Run `:checkhealth todo` after installation.
 All commands use the single `:Todo` entry point:
 
 ```text
-open [float|sidebar] [active|emergency|by_urgency|by_time|by_tag|notices|archived]
+open [float|sidebar] [today|active|emergency|by_urgency|by_time|by_tag|notices|archived]
 toggle [float|sidebar]
-add [title]
+today [YYYY-MM-DD]
+plan [YYYY-MM-DD]
+add [ai] [title]
+capture [text]
+revise [id]
+clarify [id]
 notice [title]
+routines
 tags
-sync [status]
+image <path>
+sync [status|conflicts]
+ai setup|key|settings|usage|balance|memory
+diagnostics
 edit [id]
 start|done|cancel|reopen [id]
 archive|restore|delete [id]
@@ -152,6 +212,93 @@ Cancel is selected by default to prevent an accidental Enter from deleting it.
 `:Todo delete [id]` provides the command equivalent. Only archived tasks can be
 permanently deleted, and deletion cannot be undone.
 
+## Screenshots
+
+### Task views
+
+| Emergency | By time left |
+| --- | --- |
+| ![Emergency](assets/screenshots/emergency-en.png) | ![By time left](assets/screenshots/by_time-en.png) |
+| Urgency ranking, so the next thing is already at the top | Relative-time labels, grouped by time remaining |
+
+| By tag | Notices |
+| --- | --- |
+| ![By tag](assets/screenshots/by_tag-en.png) | ![Notices](assets/screenshots/notices-en.png) |
+| A tag tree; a multi-tag task appears under every tag | Notices have their own view and stay in normal task views |
+
+### Today and management
+
+| Today | Tag manager |
+| --- | --- |
+| ![Today](assets/screenshots/today-en.png) | ![Tag manager](assets/screenshots/tags-en.png) |
+| Capacity, locked items, next action, and completion criteria | Create, rename, delete, filter, and inspect usage |
+
+### Forms
+
+| Edit task | New notice |
+| --- | --- |
+| ![Edit task](assets/screenshots/edit-en.png) | ![New notice](assets/screenshots/notice-en.png) |
+| Priority, status, deadline, reminder, tags, and multi-line Markdown | Trigger, repeat interval, recurrence, and a four-part duration picker |
+
+<details>
+<summary><b>More view screenshots</b></summary>
+
+| By level | Archived |
+| --- | --- |
+| ![By level](assets/screenshots/by_urgency-en.png) | ![Archived](assets/screenshots/archived-en.png) |
+| Overdue, urgent, high, attention, and priority only | Archived tasks can be restored or permanently deleted |
+
+</details>
+
+## AI workspace
+
+AI in todo.nvim is not “generate a paragraph.” It is an approval-gated task
+pipeline.
+
+### Four entry points
+
+| Entry point | Purpose |
+| --- | --- |
+| `:Todo capture [text]` / `:Todo add ai [text]` | Turn messy input into a task draft; AI asks first, then prepares a review |
+| `:Todo revise [id]` | Update an existing task with its original context; write only after approval |
+| `Q` / `:Todo clarify [id]` | Clarify the goal, deliverable, and acceptance criteria of one task |
+| `:Todo today` / `:Todo plan` | Today's execution queue / sequential AI planning |
+
+### Sequential daily planning
+
+`:Todo plan` opens a daily workspace independent of deadlines. In the default
+plan mode, AI changes become individually reviewed drafts; one `U` after apply
+undoes the whole batch. Nothing is selected initially: `t` toggles the current
+task, `T` starts a range, and `Tj` / `T3j` / `Tgg` / `TG` apply it in bulk.
+`M` switches plan / build / auto; `y/Y/n` approves source and command requests.
+
+| Daily planning | AI clarification |
+| --- | --- |
+| ![AI daily planning](assets/screenshots/plan-en.png) | ![AI chat](assets/screenshots/chat-en.png) |
+| Sequential understanding, options, approval, and sourced context | Full-width timeline, inline composer, streaming replies |
+
+### Configuration
+
+Enable `ai.enabled = true`, then run `:Todo ai setup` to choose a provider and
+enter a hidden key, or run `:Todo ai key`, or use `DEEPSEEK_API_KEY`. Supported
+providers are DeepSeek, OpenAI Responses, Anthropic Messages, and any Chat
+Completions-compatible service. OpenAI and Anthropic require an explicit model.
+Device-local credentials are stored with mode 0600 and never synced.
+`:Todo ai settings` edits language and persona. Each conversation defaults to
+ten question rounds and twenty requests, with visible cost estimates;
+`:Todo ai usage` / `:Todo ai balance` inspect usage.
+
+### Images, memory, permissions, and diagnostics
+
+Paste images into task descriptions and AI answers; files are copied into
+managed storage. AI can maintain sourced memory and is constrained by scoped
+permissions, command approval, and a read-only sandbox. Network IO is async and
+shows stages, elapsed time, and errors. Use `:Todo diagnostics` for redacted
+logs and `:checkhealth todo` for local setup checks. See
+[AI permissions and sandboxing](doc/ai-permissions.md),
+[the planning guide](doc/planning.md), and
+[the single-binary server guide](server/README.md).
+
 ## Dashboard and form
 
 The floating dashboard uses a task list and fixed detail pane when at least 100
@@ -170,12 +317,13 @@ live and shows up rendered in the detail pane afterward.
 
 ### Views
 
-Seven tabs are available; `[` and `]` cycle them, `v` opens a picker, and the
+Eight tabs are available; `[` and `]` cycle them, `v` opens a picker, and the
 active tab is highlighted in the header. Tabs wrap onto extra header lines when
 the window is too narrow to fit them on one.
 
 | Tab | Grouping |
 | --- | --- |
+| Today | An execution queue independent of deadlines, grouped by capacity and plan |
 | Active | Open and closed tasks grouped by status |
 | Emergency | Urgency-ranked flat list of candidates only |
 | By level | Every open task grouped by urgency band: overdue, urgent, high, attention, priority only |
@@ -210,6 +358,15 @@ Escape unwinds one layer at a time. In the search box it clears the query,
 closes the input, and returns the cursor to the list, from either Normal or
 Insert mode. In a menu, help popup, or detail overlay it closes that window. On
 the list it clears any active filters, or closes the panel when none are set.
+
+### Routines
+
+`:Todo routines` manages recurring templates: daily, weekdays, selected
+weekdays, or a fixed interval. A template materializes ordinary task instances,
+so completing one occurrence never changes the following ones. Use it for daily
+reviews, weekly planning, and maintenance chores.
+
+![Routine editor](assets/screenshots/routine_form-en.png)
 
 Notices handle short-lived reminders such as “take a shower in five minutes.”
 Create one with `:Todo notice [title]`; its trigger accepts `30s`, `5m`, `2h`,
@@ -429,6 +586,24 @@ have been archived—permanently deleted. Notices and task deadlines persist
 their reminder state. Existing databases migrate to schema v3 without enabling
 sound for old tasks until a reminder interval is saved.
 
+## Scope and limits
+
+todo.nvim is for people who want both their tasks and their AI workflow inside
+Neovim. It is not a hosted SaaS and does not make decisions for you.
+
+- Neovim 0.10+; the Rust core is a hard dependency with no Lua fallback.
+- AI needs your own API key; requests are billed by the provider, and the UI
+  shows cost estimates.
+- Sync is manual. Only `:Todo sync` accesses the network; there is no background
+  real-time sync.
+- Permanent deletion is limited to archived tasks and cannot be undone. New task
+  creation, permanent deletion, and bulk tag changes are outside the current
+  undo history.
+- Tasks, notices, and plans live in local SQLite. Git sync retains history;
+  deleting a task does not erase it from Git history.
+- AI writes are approval-gated by default. Model choice, capabilities, and
+  context limits depend on the provider you configure.
+
 ## Development
 
 Run the dependency-free headless suite with:
@@ -446,30 +621,8 @@ With SQLite available, the suite also runs two-device sync tests against local
 bare Git repositories, without GitHub credentials or network access. CI runs
 on Linux and macOS with Neovim 0.10.4 and the current stable release.
 
-## Today planning and DeepSeek
-
-`:Todo today` opens a manual execution plan, independent of task deadlines.
-`:Todo plan` prepares and reviews tasks sequentially with a Vim composer, images and streaming replies; `Q` clarifies the selected task. In the default plan mode, AI changes
-remain drafts until individually selected and applied. One `U` undoes the batch.
-
-Enable `ai.enabled = true` in setup, then use `:Todo ai setup` (full provider/key
-dialog), `:Todo ai key` (hidden input), or set `DEEPSEEK_API_KEY`. Device-local
-credentials are stored with mode 0600 and never synced. Supported providers:
-DeepSeek native, OpenAI Responses (`provider = "openai"`), Anthropic Messages
-(`provider = "anthropic"`), and any Chat Completions-compatible service
-(`provider = "openai_compatible"`). OpenAI/Anthropic require an explicit model.
-Language/persona are editable with `:Todo ai settings`. Default limits are ten
-question rounds and twenty requests per conversation; costs are visible estimates.
-
-Images can be pasted into Markdown descriptions and AI answers, copied into
-managed storage and synced by the optional Rust server. Network IO is async;
-operation cards show stages, elapsed time and errors. Use `:Todo diagnostics` to
-inspect redacted logs and `:checkhealth todo` for local setup checks.
-
-Sync is manual by default, with no idle or focus polling. Contextual keys reuse `t` to add/remove plan items. AI question rounds support single/multiple choices, per-option notes, persisted drafts and sourced memory management. Resizing preserves editor buffers and selections.
-
-See [the planning guide](doc/planning.md) and [the single-binary server guide](server/README.md).
+README screenshots are rendered headlessly by `scripts/screenshots/render.sh en`
+(or `zh`) with VHS and ffmpeg. Demo state is written only to the ignored
+`scripts/screenshots/.demo/` directory.
 
 [Lua configuration](doc/configuration.md) · [Authentication and security](doc/security.md)
-
-Daily planning supports plan/build/auto modes (`M`), inline permissions (`y/Y/n`), scoped research and read-only sandbox commands. See [AI permissions and sandboxing](doc/ai-permissions.md).

@@ -2,24 +2,67 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[![Tests](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/test.yml/badge.svg)](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/test.yml)
+[![Rust core](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/core.yml/badge.svg)](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/core.yml)
+[![Rust sync server](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/server.yml/badge.svg)](https://github.com/InubashiriLix/TodoAnxiety.nvim/actions/workflows/server.yml)
+[![Release](https://img.shields.io/github/v/release/InubashiriLix/TodoAnxiety.nvim?label=release)](https://github.com/InubashiriLix/TodoAnxiety.nvim/releases)
 ![Neovim](https://img.shields.io/badge/Neovim-0.10%2B-blue?logo=neovim)
 ![License](https://img.shields.io/badge/license-WTFPL-blue)
 
-一个专注、本地优先的 Neovim 任务管理插件，提供响应式 dashboard、结构化
-任务表单和 SQLite 持久化。插件根据截止时间和优先级透明地计算任务紧急程度，
-让紧急视图直接回答“接下来应该做什么？”
+**AI 原生、Rust 驱动、可多设备同步的 Neovim 任务工作台。**
 
-<https://github.com/user-attachments/assets/2d69b477-6317-413d-8381-6ce3469251cc>
+把任务、Notice、循环习惯、AI 规划、图片和多设备同步放进同一个键盘工作流。
+AI 负责把模糊想法变成可审批的草稿，Rust core 负责让紧急度、时长和循环算法
+保持确定性。
+
+![todo.nvim 主面板](assets/screenshots/active-zh.png)
+
+## 为什么是 todo.nvim
+
+大多数 Neovim TODO 插件解决“记录”；todo.nvim 想解决“决定下一步，并把决定
+执行掉”。
+
+- **AI 参与整个流程**：capture、创建、修改、澄清、每日编排都有独立入口；
+  AI 可以追问、给选项、读资料，但写入前必须审批。
+- **算法可解释**：Rust core 负责紧急度、时长、循环和任务读取；为什么这条任务
+  排第一，界面上说得清。
+- **任务和提醒不是两套系统**：Notice 会进入普通任务视图、Today 和 AI 计划；
+  完成本轮后按周期推进下一次。
+- **本地优先，同步可选**：SQLite 在本机；Git 同步只在 `:Todo sync` 时联网；
+  需要时再启用单文件 Rust server。
+- **为键盘设计**：8 个视图、折叠、搜索筛选、上下文提示、三行任务卡、内嵌图片
+  和可滚动帮助。
+
+## 功能总览
+
+| 能力 | 说明 |
+| --- | --- |
+| AI 工作台 | `capture` / `add ai` 捕获，`revise` 修改，`Q` 澄清，`plan` 逐项编排，`today` 执行 |
+| 可审批 AI | 问题选项、逐项说明、来源记忆、草稿审批、整批 `U` 撤回、费用估算 |
+| 多 Provider | DeepSeek、OpenAI Responses、Anthropic Messages、OpenAI-compatible |
+| 权限与沙盒 | 资料读取、命令审批、只读沙盒、脱敏诊断 |
+| Rust core | 强制依赖；紧急度、时长、循环和任务读取 |
+| 循环任务 | 每天、工作日、指定星期、固定间隔；模板生成普通任务实例 |
+| Notice | 声音、强制聚焦、稍后提醒、延期、错过补提醒 |
+| 8 个视图 | 今日、活动、紧急、按紧急程度、按剩余时间、按标签、提醒、归档 |
+| 任务界面 | 三行卡片、左右紧急度条、AI 标记、折叠、搜索筛选、撤销/重做 |
+| 同步 | 手动 Git 同步、UUID、冲突合并、附件、可选 Rust server |
+| 工程 | SQLite、异步网络、Neovim 0.10.4/stable CI、四平台 core 构建 |
 
 ## 目录
 
+- [为什么是 todo.nvim](#为什么是-todonvim)
+- [功能总览](#功能总览)
 - [环境要求](#环境要求)
 - [使用方法](#使用方法)
+- [界面巡览](#界面巡览)
+- [AI 工作台](#ai-工作台)
 - [Dashboard 与任务表单](#dashboard-与任务表单)
 - [配置](#配置)
 - [多设备同步](#多设备同步)
 - [紧急度排序](#紧急度排序)
 - [任务数据与生命周期](#任务数据与生命周期)
+- [适用与边界](#适用与边界)
 - [开发与测试](#开发与测试)
 
 ## 环境要求
@@ -74,12 +117,19 @@ lazy.nvim 安装示例：
 ```vim
 :Todo                         " 打开活动任务浮窗
 :Todo open sidebar emergency " 在侧栏打开紧急任务视图
+:Todo today                   " 打开今日执行清单
+:Todo plan                    " 打开 AI 每日逐项编排
 :Todo add 编写发布说明        " 预填标题并打开新任务表单
 :Todo add ai 要联系银行        " 让 AI 追问并生成新任务草稿
 :Todo capture 零散想法         " AI 记录模式：先追问，再生成审批草稿
+:Todo revise 42               " 让 AI 修改任务 42，审批后写入
+:Todo clarify 42              " 让 AI 澄清任务 42
 :Todo notice 五分钟后洗澡    " 打开新 Notice 表单
+:Todo routines                " 管理循环任务
 :Todo open notices           " 查看所有未归档 Notice
 :Todo tags                    " 打开标签管理面板
+:Todo ai setup                " 配置 Provider、模型和密钥
+:Todo diagnostics             " 查看脱敏诊断日志
 :Todo done 42                " 完成 ID 为 42 的任务
 :Todo archive 42             " 归档任务，仍可恢复
 :Todo restore 42             " 恢复已归档任务
@@ -89,12 +139,21 @@ lazy.nvim 安装示例：
 所有命令都通过统一的 `:Todo` 入口调用：
 
 ```text
-open [float|sidebar] [active|emergency|by_urgency|by_time|by_tag|notices|archived]
+open [float|sidebar] [today|active|emergency|by_urgency|by_time|by_tag|notices|archived]
 toggle [float|sidebar]
-add [title]
+today [YYYY-MM-DD]
+plan [YYYY-MM-DD]
+add [ai] [title]
+capture [text]
+revise [id]
+clarify [id]
 notice [title]
+routines
 tags
-sync [status]
+image <path>
+sync [status|conflicts]
+ai setup|key|settings|usage|balance|memory
+diagnostics
 edit [id]
 start|done|cancel|reopen [id]
 archive|restore|delete [id]
@@ -141,6 +200,86 @@ close
 避免误按 Enter。也可以使用 `:Todo delete [id]`。永久删除仅允许作用于已归档任务，
 活动任务会被数据库服务层拒绝。此操作不可恢复。
 
+## 界面巡览
+
+### 任务视图
+
+| 紧急任务 | 按剩余时间 |
+| --- | --- |
+| ![紧急任务](assets/screenshots/emergency-zh.png) | ![按剩余时间](assets/screenshots/by_time-zh.png) |
+| 紧急度排序，先处理真正会爆炸的任务 | 相对时间标签，按剩余时间分组 |
+
+| 按标签 | 提醒事项 |
+| --- | --- |
+| ![按标签](assets/screenshots/by_tag-zh.png) | ![提醒事项](assets/screenshots/notices-zh.png) |
+| 标签树，多标签任务会出现在每个标签下 | Notice 独立管理，也会进入普通任务视图 |
+
+### 今日与整理
+
+| 今日执行清单 | 标签管理 |
+| --- | --- |
+| ![今日](assets/screenshots/today-zh.png) | ![标签](assets/screenshots/tags-zh.png) |
+| 今日容量、锁定项、下一步和完成标准 | 新建、重命名、删除、筛选和使用量 |
+
+### 表单
+
+| 编辑任务 | 新建 Notice |
+| --- | --- |
+| ![编辑任务](assets/screenshots/edit-zh.png) | ![新建 Notice](assets/screenshots/notice-zh.png) |
+| 优先级、状态、截止时间、提醒、标签和多行 Markdown | 触发时间、重复间隔、周期和四段式时长选择 |
+
+<details>
+<summary><b>展开其余视图截图</b></summary>
+
+| 按紧急程度 | 已归档 |
+| --- | --- |
+| ![按紧急程度](assets/screenshots/by_urgency-zh.png) | ![已归档](assets/screenshots/archived-zh.png) |
+| 已逾期、紧急、较急、需关注、仅优先级 | 已归档任务，可恢复或永久删除 |
+
+</details>
+
+## AI 工作台
+
+todo.nvim 的 AI 不是“生成一段文字”，而是一条可审批的任务流水线。
+
+### 四个入口
+
+| 入口 | 用途 |
+| --- | --- |
+| `:Todo capture [text]` / `:Todo add ai [text]` | 把零散想法变成任务草稿；AI 先追问，再生成审批稿 |
+| `:Todo revise [id]` | 修改已有任务，保留原任务上下文，审批后写入 |
+| `Q` / `:Todo clarify [id]` | 针对单个任务澄清目标、交付物和验收标准 |
+| `:Todo today` / `:Todo plan` | 今日执行清单 / 每日逐项 AI 编排 |
+
+### 每日逐项编排
+
+`:Todo plan` 打开独立于截止时间的每日规划工作区。默认 plan 模式下，AI 的修改
+先进入逐条审批；提交后按一次 `U` 可整批撤回。默认不选中任务，`t` 切换当前任务，
+`T` 进入范围标记，`Tj` / `T3j` / `Tgg` / `TG` 批量加入或移出计划。`M` 切换
+plan / build / auto，资料和命令申请用 `y/Y/n` 审批。
+
+| 每日编排 | AI 澄清对话 |
+| --- | --- |
+| ![AI 每日编排](assets/screenshots/plan-zh.png) | ![AI 对话](assets/screenshots/chat-zh.png) |
+| 逐项理解、选项、审批和上下文来源 | 全宽时间线、内嵌输入框、流式回复 |
+
+### 配置
+
+在 setup 中开启 `ai.enabled = true`，再执行 `:Todo ai setup` 选择供应商并隐藏
+输入密钥；也可以只执行 `:Todo ai key`，或使用 `DEEPSEEK_API_KEY`。支持 DeepSeek、
+OpenAI Responses、Anthropic Messages 和 Chat Completions 兼容服务。OpenAI /
+Anthropic 需要显式填写模型。本机凭据以 0600 权限保存，不参与同步。
+`:Todo ai settings` 设置回复语言和人设。每个会话默认最多 10 轮问题、20 次请求，
+并显示费用估算；`:Todo ai usage` / `:Todo ai balance` 查看用量。
+
+### 图片、记忆、权限与诊断
+
+任务描述和 AI 回答支持粘贴图片，文件复制到插件管理目录。AI 可以维护来源记忆，
+并受作用域权限、命令审批和只读沙盒约束。网络请求异步执行，有阶段、转动指示、
+耗时和错误反馈；`:Todo diagnostics` 查看脱敏日志，`:checkhealth todo` 检查本机
+环境。每日规划的权限细节见[AI 权限与沙盒](doc/ai-permissions.md)，完整工作流见
+[使用指南](doc/planning.md) 和[服务端部署说明](server/README.md)。
+
 ## Dashboard 与任务表单
 
 浮动 dashboard 在可用宽度达到 100 列时使用左侧任务列表、右侧固定详情的布局。
@@ -156,11 +295,12 @@ close
 
 ### 视图
 
-共有七个标签页：`[` 和 `]` 循环切换，`v` 打开选择菜单，当前标签在标题栏高亮。
+共有八个标签页：`[` 和 `]` 循环切换，`v` 打开选择菜单，当前标签在标题栏高亮。
 窗口宽度不足时，标签会自动折行到标题栏的下一行。
 
 | 标签页 | 分组方式 |
 | --- | --- |
+| 今日 | 独立于截止时间的执行清单，按容量和计划分组 |
 | 活动任务 | 全部任务按状态分组 |
 | 紧急任务 | 仅紧急候选任务，按紧急度排序的平铺列表 |
 | 按紧急程度 | 全部未完成任务按紧急档位分组：已逾期、紧急、较急、需关注、仅优先级 |
@@ -189,6 +329,13 @@ close
 Escape 每次只回退一层：在搜索框中（Normal 或 Insert 模式均可）清除搜索词、
 关闭输入框并把光标交还列表；在菜单、帮助浮窗或详情浮窗中关闭该窗口；在列表中
 先清除当前筛选，没有筛选时才关闭面板。
+
+### 循环任务
+
+`:Todo routines` 管理循环任务模板：每天、工作日、指定星期或固定间隔。模板生成普通
+任务实例，完成一次不会影响后续；适合每日回顾、每周计划和固定维护。
+
+![循环任务](assets/screenshots/routine_form-zh.png)
 
 Notice 用于“5 分钟后洗澡”这类需要持续催促的日常事项。使用 `:Todo notice [标题]`
 创建，在触发时间中直接输入 `30s`、`5m`、`2h` 或准确日期；Normal 模式按 `c`
@@ -407,6 +554,20 @@ Notice 和带 DDL 的普通任务都可持久化提醒状态。旧数据库会�
 stdpath("data")/todo.nvim/todo.db
 ```
 
+## 适用与边界
+
+todo.nvim 面向愿意把任务和 AI 工作流都放进 Neovim 的人；它不是云端 SaaS，也不
+替你做决定。
+
+- Neovim 0.10+；Rust core 是硬依赖，没有 Lua fallback。
+- AI 需要自己的 API key；请求会按 Provider 计费，界面显示费用估算。
+- 同步是手动的，只有 `:Todo sync` 会联网；没有后台实时同步。
+- 永久删除只对已归档任务开放，且不可撤销；新建、永久删除和批量标签变更不在当前
+  撤销范围内。
+- 任务、Notice 和计划保存在本机 SQLite；Git 同步会保留历史记录，删除不等于从
+  Git 历史中抹除。
+- AI 写入默认需要审批；不同 Provider 的模型、能力和上下文长度由你配置。
+
 ## 开发与测试
 
 运行无额外测试框架依赖的 headless 测试：
@@ -422,28 +583,7 @@ NUI 集成测试同样要求 `nui.nvim`。测试脚本会自动检测 lazy.nvim 
 有 SQLite 依赖时，还会使用本地裸 Git 仓库执行双设备同步测试，无需 GitHub 凭据或联网。
 CI 配置覆盖 Linux、macOS，以及 Neovim 0.10.4 和当前稳定版。
 
-## 今日计划与 DeepSeek 编排
-
-`:Todo today` 打开独立于截止时间的今日执行清单；`:Todo plan` 打开逐项检查的每日规划工作区（Vim 输入、图片与流式回复），
-任务上按 `Q` 澄清描述。默认 plan 模式下，AI 修改先进入逐条审批，提交后 `U` 可整批撤回。
-
-在 setup 中开启 `ai.enabled = true`，再执行 `:Todo ai setup` 选择供应商并隐藏输入
-密钥；也可以只执行 `:Todo ai key`，或使用 `DEEPSEEK_API_KEY`。支持 DeepSeek、
-OpenAI Responses、Anthropic Messages 和 Chat Completions 兼容服务。OpenAI/
-Anthropic 需要显式填写模型。本机凭据以 0600 权限保存，不参与同步。
-`:Todo ai settings` 设置回复语言和人设。每个会话默认最多 10 轮问题、20 次请求，
-并显示费用估算。
-
-任务描述和 AI 回答支持粘贴图片，文件复制到插件管理目录。可选 Rust 单文件服务
-同步任务、今日计划、对话、图片和用量，无需 Docker。网络请求异步执行，有阶段、
-转动指示、耗时和错误反馈；`:Todo diagnostics` 查看脱敏诊断日志。
-
-`:Todo routines` 管理循环任务：按天/工作日/每周几/每月生成任务实例，完成后不影响后续。
-
-默认手动同步，不在空闲或重新聚焦时请求网络。`t` 根据当前任务切换加入／移出计划；`T` 是范围标记，`Tj` / `T3j` / `Tgg` / `TG` 可批量处理。AI 支持多题选项表单、逐项说明和可管理的来源记忆；窗口缩放保留草稿。
-
-详见[完整使用指南](doc/planning.md)和[服务端部署说明](server/README.md)。
+README 里的界面截图由 `scripts/screenshots/render.sh zh`（或 `en`）使用 VHS 和
+ffmpeg 无头渲染；演示数据只写入被忽略的 `scripts/screenshots/.demo/`。
 
 [Lua 完整配置示例](doc/configuration.md) · [认证与安全边界](doc/security.md)
-
-每日规划支持 `M` 切换 plan/build/auto，申请卡 `y/Y/n` 审批资料和命令，详见[AI 权限与沙盒](doc/ai-permissions.md)。
