@@ -1,20 +1,24 @@
 local M = {}
 local uv = vim.uv or vim.loop
+local sha256 = require("todo.sha256")
 local function cfg()
     return require("todo.config").get().attachments
 end
 
--- Neovim versions differ on whether uv.fs_read returns a String or a Blob.
--- Normalize before hashing, MIME inspection and file writes.
-local function bytes_string(value)
-    if type(value) == "string" then
-        return value
+-- Neovim 0.10 returns binary reads as a Blob. vim.fn.sha256() rejects it, so
+-- hash the byte list directly while keeping the original value for writes.
+local function is_blob(value)
+    local ok, kind = pcall(vim.fn.type, value)
+    return ok and kind == 10
+end
+
+local function hash_bytes(value)
+    if not is_blob(value) then
+        return vim.fn.sha256(value)
     end
     local ok, list = pcall(vim.fn.blob2list, value)
-    if ok and type(list) == "table" then
-        return table.concat(vim.tbl_map(string.char, list))
-    end
-    error("Unsupported binary buffer type")
+    assert(ok, list)
+    return sha256.bytes(list)
 end
 function M.directory(store)
     return cfg().directory ~= "" and cfg().directory or store.path .. ".assets"
@@ -40,10 +44,10 @@ function M.import(path, opts)
     local stat = assert(uv.fs_stat(path), "image not found")
     assert(stat.type == "file" and stat.size > 0 and stat.size <= cfg().max_bytes, "image exceeds size limit")
     local fd = assert(uv.fs_open(path, "r", 384))
-    local bytes = bytes_string(assert(uv.fs_read(fd, stat.size, 0)))
+    local bytes = assert(uv.fs_read(fd, stat.size, 0))
     uv.fs_close(fd)
     local ext, mime = identify(bytes)
-    local hash = vim.fn.sha256(bytes)
+    local hash = hash_bytes(bytes)
     assert(not opts.expected_hash or opts.expected_hash == hash, "image hash mismatch")
     local dir = M.directory(store)
     vim.fn.mkdir(dir, "p", 448)
