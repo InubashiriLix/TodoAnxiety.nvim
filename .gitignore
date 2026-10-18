@@ -9,5 +9,6 @@ cache/
 .claude/
 .codex/
 
-# Rust sync server build artifacts
+# Rust dependency cache and build artifacts
+.cargo/
 server/target/
