@@ -24,6 +24,15 @@ jobs:
           neovim: true
           version: ${{ matrix.neovim }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install ripgrep
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install ripgrep
+          fi
       - name: Build required Rust core
         shell: bash
         run: cargo build --manifest-path core/Cargo.toml
