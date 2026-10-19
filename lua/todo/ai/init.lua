@@ -297,6 +297,23 @@ local function validate(result, s, revisions, plan_revision, refs)
     assert(result.action == "draft" or result.action == "summary", "expected question or draft")
     result.changes = result.changes or {}
     assert(vim.islist(result.changes) and #result.changes <= 200, "invalid changes")
+    if s.scope == "daily_item" then
+        -- An item review may only propose documentation edits. Drop anything
+        -- else instead of discarding the whole completed review.
+        local before = #result.changes
+        result.changes = vim.tbl_filter(function(c)
+            return type(c) == "table" and (c.kind == "description" or c.kind == "note")
+        end, result.changes)
+        if #result.changes ~= before then
+            require("todo.diagnostics").record({
+                operation = "AI response",
+                stage = "filter",
+                status = "dropped",
+                count = before - #result.changes,
+                error = "Item review changes limited to description/note",
+            })
+        end
+    end
     local seen = {}
     for index, c in ipairs(result.changes) do
         assert(type(c) == "table" and operations[c.kind], "invalid operation")
@@ -759,7 +776,7 @@ Every response may include summary (rolling summary of facts and decisions, not 
                             )
                             local validated = validate(decoded, session, revisions, plan_revision, task_refs)
                             if opts.validate_result then
-                                opts.validate_result(validated, session, research_evidence)
+                                opts.validate_result(validated, session, research_evidence, repair)
                             end
                             if validated.action == "draft" then
                                 local docs = {}

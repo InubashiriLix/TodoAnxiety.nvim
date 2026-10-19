@@ -32,7 +32,7 @@ what is next, then actually doing it.”
 - **Local-first, optional sync**: SQLite stays on your machine. Git sync talks
   to the network only during `:Todo sync`; the single-binary Rust server is
   optional.
-- **Built for the keyboard**: eight views, folds, search and filters, contextual
+- **Built for the keyboard**: five scopes and four groupings, folds, search and filters, contextual
   hints, three-row cards, inline images, and scrollable help.
 
 ## Feature overview
@@ -46,7 +46,7 @@ what is next, then actually doing it.”
 | Rust core | required; urgency, duration, recurrence, and task reads |
 | Routines | daily, weekdays, selected weekdays, and fixed intervals; templates create normal task instances |
 | Notices | sound, forced focus, snooze, postpone, and missed-reminder catch-up |
-| Eight views | Today, Active, Emergency, By level, By time left, By tag, Notices, Archived |
+| Five scopes × four groupings | Today, Active, Emergency, Notices, Archived; Status, Urgency, Time left, Tag |
 | Task UI | three-row cards, left/right urgency bars, AI marks, folds, search, filters, undo/redo |
 | Sync | manual Git sync, UUIDs, conflict merge, attachments, optional Rust server |
 | Engineering | SQLite, async networking, Neovim 0.10.4/stable CI, four-target core build |
@@ -317,20 +317,30 @@ live and shows up rendered in the detail pane afterward.
 
 ### Views
 
-Eight tabs are available; `[` and `]` cycle them, `v` opens a picker, and the
-active tab is highlighted in the header. Tabs wrap onto extra header lines when
-the window is too narrow to fit them on one.
+The header keeps five scope tabs; `[` and `]` cycle them and the active scope is
+highlighted. Grouping is a separate choice: press `o` to cycle Status, Urgency,
+Time left, and Tag, or `v` for the full view picker. This keeps the tab bar from
+growing every time a new grouping is added.
 
-| Tab | Grouping |
+| Scope | Content |
 | --- | --- |
 | Today | An execution queue independent of deadlines, grouped by capacity and plan |
-| Active | Open and closed tasks grouped by status |
+| Active | All tasks |
 | Emergency | Urgency-ranked flat list of candidates only |
-| By level | Every open task grouped by urgency band: overdue, urgent, high, attention, priority only |
-| By time left | Every open task ordered by time remaining, grouped into overdue, due today, this week, later, no deadline. Cards show a relative `in 3d 4h` label |
-| By tag | A tree with one root per tag plus Untagged; a task with several tags appears under each of them |
 | Notices | Reminders ordered by next trigger |
 | Archived | Archived tasks, newest first |
+
+Active, Today, and Emergency support these groupings:
+
+| Grouping | Meaning |
+| --- | --- |
+| Status | In progress, todo, done, cancelled |
+| Urgency | Overdue, urgent, high, attention, priority only |
+| Time left | Overdue, due today, this week, later, no deadline; cards show a relative `in 3d 4h` label |
+| Tag | One root per tag plus Untagged; a task with several tags appears under each of them |
+
+`by_urgency`, `by_time`, and `by_tag` remain valid `:Todo open` arguments and
+mean "Active with that grouping".
 
 Every section header can be folded: `<Tab>` or `za` toggles the section holding
 the cursor, `zR` expands all, and `zM` collapses all. Folds are remembered per

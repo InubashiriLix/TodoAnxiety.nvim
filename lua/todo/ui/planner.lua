@@ -539,12 +539,16 @@ end
 function M.review(id)
     local ws, svc, planner, ai = dependencies()
     local draft = assert(ws:get("draft", id), "draft not found")
+    local applied = draft.status == "applied"
     local owner = surface(L("Review AI draft", "审批 AI 草稿"), { split = true })
     local rows, selected = {}, {}
     for _, c in ipairs(draft.changes) do
         selected[c.id] = c.selected == true
     end
     local function save()
+        if applied then
+            return
+        end
         for _, c in ipairs(draft.changes) do
             c.selected = selected[c.id]
         end
@@ -624,13 +628,37 @@ function M.review(id)
             end
         end
         local lines = {
-            L("READY FOR REVIEW", "等待审批") .. "  " .. count .. " / " .. #draft.changes .. " " .. L(
-                "selected",
-                "已选"
-            ),
+            (applied and L("ALREADY APPLIED", "已应用") or L("READY FOR REVIEW", "等待审批"))
+                .. "  "
+                .. count
+                .. " / "
+                .. #draft.changes
+                .. " "
+                .. L("selected", "已选"),
             draft.summary or "",
             "",
         }
+        local kind_counts = {}
+        for _, change in ipairs(draft.changes) do
+            kind_counts[change.kind] = (kind_counts[change.kind] or 0) + 1
+        end
+        local kind_parts = {}
+        for _, kind in ipairs({ "description", "note", "plan_add", "plan_update", "plan_remove", "task_update", "task_create" }) do
+            if kind_counts[kind] then
+                kind_parts[#kind_parts + 1] = (names[kind] or kind) .. " " .. kind_counts[kind]
+            end
+        end
+        local total = #draft.changes
+        local bar_width = math.min(20, math.max(4, total))
+        local filled = total > 0 and math.floor(count / total * bar_width) or 0
+        local bar = "[" .. string.rep("█", filled) .. string.rep("░", bar_width - filled) .. "]"
+        local kind_line = table.concat(kind_parts, " · ")
+        if kind_line ~= "" or total > 0 then
+            table.insert(lines, 3, (kind_line ~= "" and (kind_line .. "  ") or "") .. bar)
+        end
+        if applied then
+            table.insert(lines, 3, L("This draft was already applied.", "该草稿已应用。"))
+        end
         for _, c in ipairs(draft.changes) do
             local task = c.task_uuid and planner:task(c.task_uuid)
             lines[#lines + 1] = string.format(
@@ -662,6 +690,9 @@ function M.review(id)
         end,
     })
     owner.map("<Space>", function()
+        if applied then
+            return
+        end
         local c = rows[owner.row()]
         if c then
             selected[c.id] = not selected[c.id]
@@ -687,6 +718,9 @@ function M.review(id)
         end
     end)
     owner.map("e", function()
+        if applied then
+            return
+        end
         local c = rows[owner.row()]
         if not c then
             return
@@ -793,22 +827,60 @@ function M.review(id)
         end
     end)
     owner.map("a", function()
-        assert(draft.status ~= "applied", "draft already applied")
+        if applied then
+            vim.notify(L("This draft was already applied.", "该草稿已应用。"), vim.log.levels.INFO)
+            owner.close()
+            return
+        end
         assert(vim.tbl_contains(vim.tbl_values(selected), true), "select at least one change")
+        local applied_count, applied_kinds = 0, {}
+        for _, change in ipairs(draft.changes) do
+            if selected[change.id] then
+                applied_count = applied_count + 1
+                applied_kinds[change.kind] = (applied_kinds[change.kind] or 0) + 1
+            end
+        end
         planner:apply(draft, selected)
+        draft.status = "applied"
+        local kind_parts = {}
+        for _, kind in ipairs({ "description", "note", "plan_add", "plan_update", "plan_remove", "task_update", "task_create" }) do
+            if applied_kinds[kind] then
+                kind_parts[#kind_parts + 1] = (names[kind] or kind) .. " " .. applied_kinds[kind]
+            end
+        end
+        local message = L("Applied ", "已应用 ")
+            .. applied_count
+            .. L(" change(s)", " 项修改")
+            .. (#kind_parts > 0 and (" · " .. table.concat(kind_parts, " · ")) or "")
+            .. L(" · U undo on the task page", " · 任务页 U 撤回")
+        vim.notify(message, vim.log.levels.INFO, { title = "todo.nvim" })
+        if draft.workflow_id then
+            local daily = ws:get("conversation", draft.workflow_id)
+            if daily then
+                daily.events = daily.events or {}
+                daily.events[#daily.events + 1] = { kind = "applied", text = message, at = os.time() }
+                while #daily.events > 40 do
+                    table.remove(daily.events, 1)
+                end
+                ws:put("conversation", draft.workflow_id, daily)
+            end
+        end
         owner.close()
         require("todo")._reconcile_reminders()
         require("todo.ui.panel").refresh()
         require("todo").today(draft.date)
     end)
-    help(owner, {
+    local actions = {
         { key = "Space", label = L("Select or reject change", "勾选或拒绝修改") },
         { key = "Enter", label = L("Compare before and after", "查看修改前后") },
         { key = "e", label = L("Edit proposal", "编辑建议") },
         { key = "f", label = L("Send feedback to AI", "向 AI 反馈") },
-        { key = "a", label = L("Apply selected changes", "提交选中的修改") },
-        { key = "t", label = L("Continue conversation", "继续对话") },
-    })
+    }
+    if not applied then
+        actions[#actions + 1] = { key = "a", label = L("Apply selected changes", "提交选中的修改") }
+    end
+    actions[#actions + 1] = { key = "t", label = L("Continue conversation", "继续对话") }
+    help(owner, actions)
     owner.on_resize = function()
         M.review(id)
     end

@@ -7,6 +7,32 @@ local uv = vim.uv or vim.loop
 local function cfg()
     return require("todo.config").get()
 end
+local function T(en, zh)
+    return cfg().language == "zh-CN" and zh or en
+end
+local function change_counts(changes)
+    local counts = {}
+    for _, change in ipairs(changes or {}) do
+        counts[change.kind] = (counts[change.kind] or 0) + 1
+    end
+    return counts
+end
+local function counts_text(counts)
+    local parts = {}
+    for _, kind in ipairs({ "description", "note", "plan_add", "plan_update", "plan_remove" }) do
+        if counts[kind] and counts[kind] > 0 then
+            local label = ({
+                description = T("description", "描述"),
+                note = T("note", "备注"),
+                plan_add = T("plan", "排期"),
+                plan_update = T("plan", "排期"),
+                plan_remove = T("plan", "排期"),
+            })[kind]
+            parts[#parts + 1] = label .. " " .. counts[kind]
+        end
+    end
+    return table.concat(parts, " · ")
+end
 function M.new(ws, svc, ai, date, opts)
     opts = opts or {}
     date = date or require("todo.planning").new(ws, svc):date()
@@ -313,6 +339,66 @@ function M:counts()
     end
     return done, total
 end
+function M:progress()
+    local total, checked, deferred = 0, 0, 0
+    for _, e in ipairs(self.state.queue) do
+        if e.selected and not e.missing then
+            total = total + 1
+            if e.deferred then
+                deferred = deferred + 1
+            elseif self:checked(e) then
+                checked = checked + 1
+            end
+        end
+    end
+    return {
+        total = total,
+        checked = checked,
+        deferred = deferred,
+        remaining = math.max(0, total - checked - deferred),
+    }
+end
+function M:phase()
+    if self.busy then
+        return self.state.status == "assembling" and "arranging" or "clarifying"
+    end
+    if self.state.last_error then
+        return "error"
+    end
+    local status = self.state.status
+    if status == "preparing" then
+        return "preparing"
+    elseif status == "assembling" then
+        return "arranging"
+    elseif status == "review" then
+        return "reviewing"
+    elseif status == "applied" then
+        return "applied"
+    elseif status == "paused" then
+        return "paused"
+    end
+    return "clarifying"
+end
+function M:event(kind, text)
+    self.state.events = self.state.events or {}
+    self.state.events[#self.state.events + 1] =
+        { kind = kind, text = tostring(text or ""):sub(1, 300), at = os.time() }
+    while #self.state.events > 40 do
+        table.remove(self.state.events, 1)
+    end
+    self:save()
+end
+function M:toggle_deferred(entry)
+    entry = entry or self:current()
+    assert(entry, "No current task")
+    if entry.deferred then
+        entry.deferred = nil
+        self:event("restored", T("Restored: ", "已恢复：") .. (entry.title or entry.uuid))
+    else
+        entry.deferred = T("User deferred this task", "用户选择稍后处理")
+        self:event("deferred", T("Deferred: ", "已跳过：") .. (entry.title or entry.uuid))
+    end
+end
 function M:current()
     for _, entry in ipairs(self.state.queue) do
         if entry.uuid == self.state.current_uuid then
@@ -376,6 +462,19 @@ function M:budget()
     )
     assert(not a.daily_budget_usd or self.ai:usage().today_usd < a.daily_budget_usd, "今日费用已达到预算。")
 end
+-- Classify a stored failure so the UI can offer the matching budget control.
+function M:budget_error()
+    local err = tostring(self.state.last_error or "")
+    if err == "" then
+        return nil
+    end
+    if err:find("今日费用", 1, true) or err:lower():find("daily budget", 1, true) then
+        return "daily"
+    end
+    if err:find("本次规划费用", 1, true) or err:lower():find("session budget", 1, true) then
+        return "session"
+    end
+end
 function M:checkpoint(callback)
     local sync = cfg().sync
     if sync.enabled and sync.provider == "server" then
@@ -400,6 +499,7 @@ function M:_finish(status, err)
     local function released(sync_error)
         local function done()
             self.busy = false
+            self.request_started = nil
             self.finishing = false
             self.pausing = false
             self.request = nil
@@ -629,17 +729,39 @@ function M:_drive(answer)
     vim.list_extend(attachments, require("todo.assets").refs(self.state.intent or ""))
     local function evidence_sources(session, research)
         local sources = {}
+        local function add(value)
+            if type(value) == "string" and value ~= "" then
+                sources[#sources + 1] = value
+            end
+        end
+        local function add_round(round)
+            if type(round) ~= "table" or type(round.questions) ~= "table" then
+                return
+            end
+            for _, q in ipairs(round.questions) do
+                add(q.header)
+                add(q.question)
+                for _, option in ipairs(q.options or {}) do
+                    add(option.label)
+                    add(option.description)
+                end
+            end
+        end
         -- Separate sources: a quote must not accidentally span unrelated records.
         for i = #session.messages, 1, -1 do
             local msg = session.messages[i]
             if msg.role == "user" and msg.origin ~= "workflow" and type(msg.content) == "string" then
-                sources[#sources + 1] = msg.content
+                add(msg.content)
             end
         end
-        sources[#sources + 1] = self.state.intent or ""
-        sources[#sources + 1] = doc.text
-        sources[#sources + 1] = task.title
-        sources[#sources + 1] = research or ""
+        add_round(session.round)
+        for _, item in ipairs(self:overview()) do
+            add(item.title)
+        end
+        add(self.state.intent)
+        add(doc.text)
+        add(task.title)
+        add(research)
         return sources
     end
     self:_request(
@@ -654,8 +776,11 @@ function M:_drive(answer)
                 if reason:find("understanding evidence", 1, true) or reason:find("Understanding evidence", 1, true) then
                     return require("todo.ai.evidence").repair(evidence_sources(session, research))
                 end
+                if reason:find("Goal is unclear", 1, true) then
+                    return 'Set understanding.goal_clear=false and return questions ONLY with intent exactly "goal", "scope" or "deliverable". Do not ask progress, estimate or dependency questions until the goal and deliverable are grounded.'
+                end
             end,
-            validate_result = function(result, session, research_evidence)
+            validate_result = function(result, session, research_evidence, repairing)
                 if result.action == "lookup" then
                     return
                 end
@@ -664,46 +789,130 @@ function M:_drive(answer)
                     read and read.complete and read.hash == doc.hash,
                     "Read the FULL current task and notes before asking questions or completing review"
                 )
+                local degraded = false
                 local u = result.understanding
-                assert(
-                    type(u) == "table" and type(u.goal_clear) == "boolean",
-                    "Include understanding with goal_clear, goal, deliverable, unknowns and evidence before asking questions"
-                )
-                for _, key in ipairs({ "goal", "deliverable" }) do
-                    assert(type(u[key]) == "string" and #u[key] <= 1500, "Invalid understanding " .. key)
-                end
-                assert(
-                    type(u.unknowns) == "table" and vim.islist(u.unknowns) and #u.unknowns <= 8,
-                    "List at most 8 unknowns"
-                )
-                for _, value in ipairs(u.unknowns) do
-                    assert(type(value) == "string" and #value <= 800, "Invalid unknown")
-                end
-                assert(
-                    type(u.evidence) == "table" and vim.islist(u.evidence) and #u.evidence <= 6,
-                    "Invalid understanding evidence"
-                )
-                local sources = evidence_sources(session, research_evidence)
-                for index, quote in ipairs(u.evidence) do
-                    assert(
-                        require("todo.ai.evidence").matches(quote, sources),
-                        "Understanding evidence["
-                            .. index
-                            .. "] must quote current task text, user answers, intent or approved research; only whitespace differences are allowed"
-                    )
-                end
-                if u.goal_clear then
-                    assert(
-                        u.goal ~= "" and u.deliverable ~= "" and #u.evidence > 0,
-                        "A clear goal requires an evidenced goal and deliverable"
-                    )
-                elseif result.action == "question" then
-                    for _, q in ipairs(result.round.questions) do
+                if type(u) ~= "table" then
+                    if not repairing then
                         assert(
-                            ({ goal = true, scope = true, deliverable = true })[q.intent],
-                            "Goal is unclear: clarify goal/scope/deliverable before progress or estimates"
+                            false,
+                            "Include understanding with goal_clear, goal, deliverable, unknowns and evidence before asking questions"
                         )
                     end
+                    u = { goal_clear = false, goal = "", deliverable = "", unknowns = {}, evidence = {} }
+                    result.understanding = u
+                    degraded = true
+                end
+                if u.goal_clear == "true" then
+                    u.goal_clear = true
+                elseif u.goal_clear == "false" then
+                    u.goal_clear = false
+                end
+                if type(u.goal_clear) ~= "boolean" then
+                    if not repairing then
+                        assert(
+                            false,
+                            "Include understanding with goal_clear, goal, deliverable, unknowns and evidence before asking questions"
+                        )
+                    end
+                    u.goal_clear = false
+                    degraded = true
+                end
+                u.goal = type(u.goal) == "string" and vim.fn.strcharpart(u.goal, 0, 1500) or ""
+                u.deliverable = type(u.deliverable) == "string" and vim.fn.strcharpart(u.deliverable, 0, 1500) or ""
+                local unknowns = {}
+                if type(u.unknowns) == "table" and vim.islist(u.unknowns) then
+                    for _, value in ipairs(u.unknowns) do
+                        if type(value) == "string" and value ~= "" then
+                            unknowns[#unknowns + 1] = vim.fn.strcharpart(value, 0, 800)
+                            if #unknowns >= 8 then
+                                break
+                            end
+                        end
+                    end
+                end
+                u.unknowns = unknowns
+                local evidence_list = {}
+                if type(u.evidence) == "table" and vim.islist(u.evidence) then
+                    evidence_list = u.evidence
+                elseif type(u.evidence) == "string" and u.evidence ~= "" then
+                    evidence_list = { u.evidence }
+                end
+                local quotes = {}
+                for _, quote in ipairs(evidence_list) do
+                    if type(quote) == "string" and quote ~= "" then
+                        quotes[#quotes + 1] = quote
+                        if #quotes >= 50 then
+                            break
+                        end
+                    end
+                end
+                u.evidence = quotes
+                local sources = evidence_sources(session, research_evidence)
+                local verified = {}
+                for _, quote in ipairs(u.evidence) do
+                    if require("todo.ai.evidence").matches(quote, sources) then
+                        verified[#verified + 1] = quote
+                        if #verified >= 6 then
+                            break
+                        end
+                    end
+                end
+                u.evidence = verified
+                if u.goal_clear then
+                    if u.goal == "" or u.deliverable == "" then
+                        if repairing then
+                            u.goal_clear = false
+                            degraded = true
+                        else
+                            assert(
+                                false,
+                                "A clear goal requires an evidenced goal and deliverable"
+                            )
+                        end
+                    end
+                    if u.goal_clear and #verified == 0 then
+                        if repairing then
+                            u.goal_clear = false
+                            degraded = true
+                        else
+                            assert(
+                                false,
+                                "Understanding evidence must quote current task text, user answers, intent or approved research; only whitespace differences are allowed"
+                            )
+                        end
+                    end
+                end
+                if result.action == "question" and not degraded and not u.goal_clear then
+                    for _, q in ipairs(result.round.questions) do
+                        if not ({ goal = true, scope = true, deliverable = true })[q.intent] then
+                            if repairing then
+                                degraded = true
+                                break
+                            end
+                            assert(
+                                false,
+                                "Goal is unclear: clarify goal/scope/deliverable before progress or estimates"
+                            )
+                        end
+                    end
+                end
+                if degraded then
+                    if #u.unknowns < 8 then
+                        u.unknowns[#u.unknowns + 1] = "Understanding evidence could not be verified"
+                    end
+                    require("todo.diagnostics").record({
+                        operation = "AI evidence",
+                        stage = "degraded",
+                        status = "complete",
+                        error = "Understanding could not be fully verified; continuing without blocking",
+                    })
+                    self:event(
+                        "warning",
+                        T(
+                            "Evidence could not be fully verified; continuing with assumptions.",
+                            "证据未完全核对，已按假设继续。"
+                        )
+                    )
                 end
                 if result.action == "draft" then
                     assert(result.review, "Finish using item_review with a review object")
@@ -733,11 +942,14 @@ Changes in an item review may ONLY propose description or note improvements for 
                 )
             end
             result.review = draft.review
+            local applied_count = 0
             if self.mode ~= "plan" and cfg().ai.permissions.auto_apply_documents and #draft.changes > 0 then
                 local selected = {}
                 for _, change in ipairs(draft.changes) do
                     selected[change.id] = true
                 end
+                applied_count = #draft.changes
+                local counts = change_counts(draft.changes)
                 local approved = vim.deepcopy(draft)
                 approved.workflow_id = nil
                 self.planner:apply(approved, selected)
@@ -748,11 +960,25 @@ Changes in an item review may ONLY propose description or note improvements for 
                 doc = self:document(entry)
                 result.read_sources[entry.uuid] =
                     { complete = true, hash = doc.hash, offset = vim.fn.strchars(doc.text) }
+                local summary = T("Auto-applied ", "已自动应用 ")
+                    .. applied_count
+                    .. T(" change(s): ", " 项修改：")
+                    .. counts_text(counts)
+                self:event("applied", summary .. " · " .. (task.title or entry.title or ""))
+                vim.notify(summary, vim.log.levels.INFO, { title = "todo.nvim" })
             end
             result.checked_revision = task.sync_revision
             result.checked_hash = doc.hash
             self.ws:put("conversation", result.id, result)
             self:save()
+            self:event(
+                "reviewed",
+                T("Reviewed: ", "已检查：")
+                    .. (task.title or entry.title or "")
+                    .. " · "
+                    .. tostring(draft.review and draft.review.minutes or 0)
+                    .. "m"
+            )
             if self.can_advance and not self.can_advance() then
                 self:_finish("paused", "输入尚未发送；提交或清空后继续。")
                 return
@@ -768,7 +994,14 @@ end
 function M:_assemble()
     self.state.status = "assembling"
     self.state.current_uuid = nil
-    self:save()
+    local progress = self:progress()
+    self:event(
+        "arranging",
+        T("Arranging: ", "进入编排：")
+            .. progress.total
+            .. T(" task(s)", " 个任务")
+            .. (progress.deferred > 0 and (T(", ", "，") .. progress.deferred .. T(" deferred", " 个已跳过")) or "")
+    )
     local reviews, candidates, reads, details = {}, {}, {}, {}
     for _, e in ipairs(self.state.queue) do
         if e.selected and not e.missing then
@@ -844,6 +1077,12 @@ DAILY FINAL PLANNING. The reviews field contains prior per-item analysis. Return
         self.ws:put("draft", draft.id, draft)
         self.state.draft_id = draft.id
         self.state.summary = draft.summary
+        local summary = T("Draft ready: ", "草稿已生成：")
+            .. #draft.changes
+            .. T(" suggestion(s)", " 项建议")
+            .. ((counts_text(change_counts(draft.changes))) ~= "" and (" · " .. counts_text(change_counts(draft.changes))) or "")
+        self:event("draft", summary)
+        vim.notify(summary, vim.log.levels.INFO, { title = "todo.nvim" })
         self:_finish("review")
     end)
 end
@@ -857,6 +1096,7 @@ function M:start(answer)
         return
     end
     self.busy = true
+    self.request_started = os.time()
     self.pausing = false
     self.finishing = false
     self.partial = nil
@@ -911,7 +1151,15 @@ function M:submit(text, round, attachments, force)
     local answer = { text = text, attachments = attachments, force = force }
     if round then
         local missing = require("todo.ai.questions").missing(round)
-        if #missing > 0 and type(text) == "string" and vim.trim(text) ~= "" then
+        if #missing > 0 and force then
+            for _, q in ipairs(missing) do
+                round.answers[q.id] = round.answers[q.id] or { selected = {}, notes = {} }
+                round.answers[q.id].custom = T(
+                    "User could not answer; use a reasonable assumption and record it as an unknown.",
+                    "用户未能回答；请按合理假设处理，并记入 unknowns。"
+                )
+            end
+        elseif #missing > 0 and type(text) == "string" and vim.trim(text) ~= "" then
             local first = missing[1]
             round.answers[first.id] = round.answers[first.id] or { selected = {}, notes = {} }
             round.answers[first.id].custom = text
@@ -970,8 +1218,8 @@ end
 function M:skip()
     local e = assert(self:current())
     assert(not self.busy, "Stop the current request first")
-    e.deferred = "用户选择稍后处理"
-    self:save()
+    e.deferred = T("User deferred this task", "用户选择稍后处理")
+    self:event("deferred", T("Deferred: ", "已跳过：") .. (e.title or e.uuid))
     self:start()
 end
 return M

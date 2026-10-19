@@ -213,6 +213,11 @@ function M:create(input, date)
     end)
 end
 function M:apply(draft, selected)
+    local saved_draft = self.ws:get("draft", draft.id)
+    if saved_draft and saved_draft.status == "applied" then
+        -- Reopening an old review or pressing a twice must never apply twice.
+        return saved_draft
+    end
     return self:transaction("Apply AI plan", function()
         local plan = self:today(draft.date or self:date())
         local created = {}

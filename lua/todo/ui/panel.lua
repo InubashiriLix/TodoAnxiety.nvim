@@ -41,6 +41,8 @@ local state = {
     owner = nil,
     mode = nil,
     view = "active",
+    scope = "active",
+    group = "status",
     tasks = {},
     stats = { active = 0, emergency = 0, notices = 0, archived = 0 },
     filters = {},
@@ -57,6 +59,29 @@ local state = {
 local function collapsed_map()
     state.collapsed[state.view] = state.collapsed[state.view] or {}
     return state.collapsed[state.view]
+end
+local function is_today()
+    return state.scope == "today"
+end
+local function service_view()
+    return grouping.compose(state.scope, state.group)
+end
+local function section_view()
+    return grouping.group_view(state.scope, state.group)
+end
+local function scope_label(scope)
+    return i18n.t(scope or state.scope)
+end
+local function group_label(group, short)
+    group = group or state.group
+    if group == "urgency" then
+        return i18n.t(short and "by_urgency_short" or "by_urgency")
+    elseif group == "time" then
+        return i18n.t(short and "by_time_short" or "by_time")
+    elseif group == "tag" then
+        return i18n.t(short and "by_tag_short" or "by_tag")
+    end
+    return i18n.t("status")
 end
 
 local function current_row()
@@ -192,7 +217,7 @@ local function tab_layout(compact, width, first_line, first_prefix)
     local continuation = string.rep(" ", vim.fn.strdisplaywidth(first_prefix))
     local lines, spans = {}, {}
     local current, line_index, prefix = first_prefix, first_line, first_prefix
-    for _, view in ipairs(grouping.views) do
+    for _, view in ipairs(grouping.scopes) do
         local label = i18n.t(compact and (view .. "_short") or view)
         local text = grouping.counted[view] and string.format("[ %s %d ]", label, state.stats[view] or 0)
             or string.format("[ %s ]", label)
@@ -214,7 +239,7 @@ local function header_content(compact, width)
     width = width or 200
     local filters = filter_summary()
     local capacity
-    if state.view == "today" then
+    if is_today() then
         local p = display_planner():today()
         local planned = 0
         for _, i in ipairs(p.items) do
@@ -229,12 +254,19 @@ local function header_content(compact, width)
             config.get().language == "zh-CN" and "预留" or "reserve"
         )
     end
+    local group_hint = grouping.supports_group(state.scope)
+            and ("  " .. i18n.t("group") .. ": " .. group_label(state.group))
+        or nil
     if compact then
-        local title = "  TODO.NVIM · " .. (capacity or i18n.t(state.view))
+        local title = "  TODO.NVIM · "
+            .. (capacity or (scope_label() .. (group_hint and (" · " .. group_label(state.group, true)) or "")))
         local tab_lines, spans = tab_layout(true, width, 2, " ")
         local result = { viewmodel.truncate(title, width) }
         for _, line in ipairs(tab_lines) do
             result[#result + 1] = viewmodel.truncate(line, width)
+        end
+        if group_hint then
+            result[#result + 1] = viewmodel.truncate(group_hint, width)
         end
         if #filters > 0 then
             result[#result + 1] = viewmodel.truncate("  " .. table.concat(filters, "   "), width)
@@ -243,6 +275,9 @@ local function header_content(compact, width)
     end
     local tab_lines, spans = tab_layout(false, width, 1, "  TODO.NVIM  ")
     local result = vim.deepcopy(tab_lines)
+    if group_hint then
+        result[#result + 1] = group_hint
+    end
     result[#result + 1] = #filters > 0 and ("  " .. table.concat(filters, "   "))
         or (capacity and ("  " .. capacity) or ("  / " .. i18n.t("search_placeholder")))
     return result, spans, 1
@@ -267,7 +302,7 @@ end
 
 local function list_content(width)
     local lines, mappings, order, decorations = {}, {}, {}, {}
-    local relative = state.view == "by_time"
+    local relative = state.group == "time"
     local rows = state.rows
     local marks = { today = {}, review = {}, ai = {} }
     local marked, value = pcall(function()
@@ -276,8 +311,8 @@ local function list_content(width)
             return { today = {}, review = {}, ai = {} }
         end
         local ws = require("todo.workspace").new(svc.store)
-        local date = state.view == "today" and display_planner():today().date or display_planner():date()
-        return require("todo.ui.task_mark").marks(ws, svc, date, state.view)
+        local date = is_today() and display_planner():today().date or display_planner():date()
+        return require("todo.ui.task_mark").marks(ws, svc, date, state.scope)
     end)
     if marked then
         marks = value
@@ -461,7 +496,7 @@ local function planning_membership(task, display)
     end
     local planner = display and display_planner()
         or require("todo.planning").new(require("todo.workspace").new(svc.store), svc)
-    local date = state.view == "today" and planner:today().date or planner:date()
+    local date = is_today() and planner:today().date or planner:date()
     local plan = planner:today(date)
     for _, item in ipairs(plan.items) do
         if task and item.task_uuid == task.sync_uuid then
@@ -489,10 +524,10 @@ local function planner_action(action, role)
                 end
             end
             require("todo").plan({
-                date = state.view == "today" and planner:today().date or nil,
-                view = state.view,
+                date = is_today() and planner:today().date or nil,
+                view = state.scope,
                 filters = vim.deepcopy(state.filters or {}),
-                task_uuids = state.view == "today" and nil or scope,
+                task_uuids = is_today() and nil or scope,
             })
             return
         end
@@ -694,7 +729,7 @@ local function today_apply(motion, count, role)
     local svc = service()
     local ws = require("todo.workspace").new(svc.store)
     local planner = require("todo.planning").new(ws, svc)
-    local date = state.view == "today" and display_planner():today().date or display_planner():date()
+    local date = is_today() and display_planner():today().date or display_planner():date()
     local plan = planner:today(date)
     local present = {}
     local all_present = true
@@ -802,7 +837,7 @@ local function panel_context(role)
         end
         add("N", "Add note", "添加备注", page)
     end
-    if state.view == "today" then
+    if is_today() then
         local item = planning_membership(context_task(role))
         if item then
             add("L", item.locked and "Unlock" or "Lock", item.locked and "解锁" or "锁定", page)
@@ -838,8 +873,11 @@ local function panel_context(role)
         add("a / n", "New task / notice", "新建任务／提醒", page)
         add("/", "Search", "搜索", page)
         add("f", "Filter", "筛选", page)
-        add("[ / ]", "Previous / next view", "上一／下一视图", page)
-        add("v", "Choose view", "选择视图", page)
+        add("[ / ]", "Previous / next scope", "上一／下一范围", page)
+        add("v", "Choose view / grouping", "选择视图／分组", page)
+        if grouping.supports_group(state.scope) then
+            add("o", "Change grouping", "切换分组", page)
+        end
         add("g", "Manage tags", "管理标签", page)
         add("r", "Refresh", "刷新", page)
         add("Esc", "Clear filters, else close", "清除筛选，否则关闭", page)
@@ -854,7 +892,8 @@ local function panel_context(role)
         add("Esc", "Close details", "关闭详情", page)
     end
     add("? / F1", "Complete help", "完整帮助", page)
-    local title = (role == "detail" or role == "overlay") and i18n.t("details") or i18n.t(state.view)
+    local title = (role == "detail" or role == "overlay") and i18n.t("details")
+        or (scope_label() .. (grouping.supports_group(state.scope) and (" · " .. group_label(state.group)) or ""))
     local task = context_task(role)
     if task then
         title = title .. " · " .. i18n.t(task.status)
@@ -914,7 +953,7 @@ local function render_float(owner)
             span.line - 1,
             span.from,
             span.to,
-            span.view == state.view and "TodoTabActive" or "TodoTabInactive"
+            span.view == state.scope and "TodoTabActive" or "TodoTabInactive"
         )
     end
     add_hl(owner.header.bufnr, #header - 1, 0, #header[#header], "TodoMuted")
@@ -923,7 +962,11 @@ local function render_float(owner)
     local lines, mappings, order, decorations = list_content(width)
     state.task_lines, state.task_order = mappings, order
     set_buffer(owner.list.bufnr, lines)
-    owner.list.border:set_text("top", " " .. i18n.t(state.view) .. " ", "left")
+    owner.list.border:set_text(
+        "top",
+        " " .. scope_label() .. (grouping.supports_group(state.scope) and (" · " .. group_label(state.group)) or "") .. " ",
+        "left"
+    )
     apply_decorations(owner.list.bufnr, decorations)
 
     if owner.detail then
@@ -969,7 +1012,7 @@ local function render_sidebar(owner)
             span.line - 1,
             span.from,
             span.to,
-            span.view == state.view and "TodoTabActive" or "TodoTabInactive"
+            span.view == state.scope and "TodoTabActive" or "TodoTabInactive"
         )
     end
     if filtered then
@@ -985,14 +1028,14 @@ render = function()
         return
     end
     local ok, tasks, stats = pcall(function()
-        return service():list(state.view, state.filters), service():stats()
+        return service():list(service_view(), state.filters), service():stats()
     end)
     if not ok then
         vim.notify(i18n.t("db_error", tasks), vim.log.levels.ERROR)
         return
     end
     state.tasks, state.stats = tasks, stats
-    state.rows = grouping.rows(grouping.sections(tasks, state.view), collapsed_map())
+    state.rows = grouping.rows(grouping.sections(tasks, section_view()), collapsed_map())
     -- Keep the cursor on the previously selected task when it is still visible.
     local target
     for index, row in ipairs(state.rows) do
@@ -1096,22 +1139,54 @@ local function select_half_page(direction)
     select_row(direction > 0 and #state.rows or 1)
 end
 
-local function change_view(view)
-    state.view, state.selected_id = view, nil
-    state.cursor_row = 1
+local function apply_view(scope, group)
+    state.scope = scope
+    state.group = grouping.supports_group(scope) and group or "status"
+    state.view = grouping.compose(state.scope, state.group)
+    state.selected_id, state.cursor_row = nil, 1
     render()
 end
 
+local function change_view(view)
+    apply_view(grouping.scope_of(view), grouping.group_of(view))
+end
+
+local function change_scope(scope)
+    apply_view(scope, state.group)
+end
+
+local function change_group(group)
+    if not grouping.supports_group(state.scope) then
+        return
+    end
+    apply_view(state.scope, group)
+end
+
 local function cycle_view(delta)
-    local views = grouping.views
+    local scopes = grouping.scopes
     local index = 1
-    for i, view in ipairs(views) do
-        if view == state.view then
+    for i, scope in ipairs(scopes) do
+        if scope == state.scope then
             index = i
             break
         end
     end
-    change_view(views[(index - 1 + delta) % #views + 1])
+    apply_view(scopes[(index - 1 + delta) % #scopes + 1], state.group)
+end
+
+local function cycle_group(delta)
+    if not grouping.supports_group(state.scope) then
+        return
+    end
+    local groups = grouping.groups
+    local index = 1
+    for i, group in ipairs(groups) do
+        if group == state.group then
+            index = i
+            break
+        end
+    end
+    change_group(groups[(index - 1 + delta) % #groups + 1])
 end
 
 --- Section key whose fold the cursor should toggle: the header itself, or the
@@ -1132,7 +1207,7 @@ local function toggle_fold()
     local collapsed = collapsed_map()
     collapsed[key] = not collapsed[key] or nil
     -- Land on the section header so repeated presses stay predictable.
-    state.rows = grouping.rows(grouping.sections(state.tasks, state.view), collapsed)
+    state.rows = grouping.rows(grouping.sections(state.tasks, section_view()), collapsed)
     for index, row in ipairs(state.rows) do
         if row.kind == "section" and row.key == key then
             state.cursor_row = index
@@ -1144,7 +1219,7 @@ end
 
 local function set_all_folds(value)
     local collapsed = collapsed_map()
-    local sections = grouping.sections(state.tasks, state.view)
+    local sections = grouping.sections(state.tasks, section_view())
     for _, section in ipairs(sections) do
         collapsed[section.key] = value or nil
     end
@@ -1156,7 +1231,7 @@ end
 local function open_task_form(task, save_task)
     local reopen = {
         mode = state.mode,
-        view = state.view,
+        view = state.scope,
         filters = vim.deepcopy(state.filters),
         selected_id = state.selected_id,
     }
@@ -1188,7 +1263,7 @@ end
 
 local function add_task(opts)
     opts = opts or {}
-    local add_to_today = state.view == "today"
+    local add_to_today = is_today()
     local last_interval = service():last_reminder_interval()
     open_task_form({
         title = opts.title or "",
@@ -1251,7 +1326,7 @@ local function edit_task()
     end
     if task.kind == "notice" then
         local reopen =
-            { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
+            { mode = state.mode, view = state.scope, filters = vim.deepcopy(state.filters), selected_id = task.id }
         M.close()
         require("todo.ui.notice_form").open(task, function(input)
             local result, errors = service():update(task.id, input, task.sync_revision)
@@ -2062,7 +2137,7 @@ local function set_mappings(component, role)
     end
     for key, action in pairs({ L = "lock", J = "down", K = "up", m = "item", C = "capacity", b = "date" }) do
         vim.keymap.set("n", key, function()
-            if state.view == "today" then
+            if is_today() then
                 planner_action(action, role)
             end
         end, opts("Today: " .. action))
@@ -2152,13 +2227,36 @@ local function set_mappings(component, role)
     vim.keymap.set("n", "]", function()
         cycle_view(1)
     end, opts("Next view"))
+    vim.keymap.set("n", "o", function()
+        if grouping.supports_group(state.scope) then
+            cycle_group(1)
+        end
+    end, opts("Change grouping"))
     vim.keymap.set("n", "v", function()
         local items = {}
-        for _, view in ipairs(grouping.views) do
-            items[#items + 1] = { label = i18n.t(view), value = view }
+        for _, scope in ipairs(grouping.scopes) do
+            items[#items + 1] = {
+                label = (scope == state.scope and "● " or "  ") .. scope_label(scope),
+                value = { scope = scope },
+            }
         end
-        menu(state.owner, i18n.t("view"), items, change_view)
-    end, opts("Choose view"))
+        for _, group in ipairs(grouping.groups) do
+            items[#items + 1] = {
+                label = (scope == state.scope and group == state.group and "● " or "  ")
+                    .. i18n.t("group")
+                    .. ": "
+                    .. group_label(group),
+                value = { group = group },
+            }
+        end
+        menu(state.owner, i18n.t("view"), items, function(value)
+            if value.scope then
+                change_scope(value.scope)
+            elseif value.group then
+                change_group(value.group)
+            end
+        end)
+    end, opts("Choose view and grouping"))
     vim.keymap.set("n", "<CR>", function()
         if current_row() and current_row().kind == "section" then
             toggle_fold()
@@ -2295,7 +2393,7 @@ local function create_float(owner)
     local cfg = config.get().ui.float
     local responsive = require("todo.ui.responsive")
     owner.header = base_popup(nil, { border = false })
-    owner.list = base_popup(i18n.t(state.view), { enter = true })
+    owner.list = base_popup(scope_label(), { enter = true })
     owner.footer = base_popup(nil, { border = false })
     owner.saved_detail = base_popup(
         i18n.t("details"),
@@ -2392,9 +2490,12 @@ function M.open(opts)
     highlights.setup()
     local previous_view = state.view
     state.mode = opts.mode or config.get().ui.default_mode
-    state.view = opts.view or config.get().ui.default_view
+    local requested_view = opts.view or config.get().ui.default_view
+    state.scope = grouping.scope_of(requested_view)
+    state.group = grouping.group_of(requested_view)
+    state.view = grouping.compose(state.scope, state.group)
     state.filters = opts.filters or state.filters or {}
-    if opts.selected_id == nil and opts.view and previous_view and opts.view ~= previous_view then
+    if opts.selected_id == nil and opts.view and previous_view and state.view ~= previous_view then
         state.selected_id = nil
     end
     state.selected_id = opts.selected_id or state.selected_id
@@ -2531,7 +2632,7 @@ function M.edit(id)
     end
     if task.kind == "notice" then
         local reopen =
-            { mode = state.mode, view = state.view, filters = vim.deepcopy(state.filters), selected_id = task.id }
+            { mode = state.mode, view = state.scope, filters = vim.deepcopy(state.filters), selected_id = task.id }
         M.close()
         require("todo.ui.notice_form").open(task, function(input)
             local result, errors = service():update(task.id, input, task.sync_revision)

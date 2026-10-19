@@ -5,8 +5,50 @@ local M = {}
 
 M.views = { "active", "today", "emergency", "by_urgency", "by_time", "by_tag", "notices", "archived" }
 
--- Views that regroup the active task set instead of defining their own scope.
+-- Views regroup the active task set instead of defining their own scope.
 M.regrouped = { by_urgency = true, by_time = true, by_tag = true }
+
+-- Primary scopes are the only views shown as tabs. Grouping is a separate,
+-- orthogonal choice so the tab bar does not grow with every way to sort tasks.
+M.scopes = { "active", "today", "emergency", "notices", "archived" }
+M.groups = { "status", "urgency", "time", "tag" }
+local group_views = { urgency = "by_urgency", time = "by_time", tag = "by_tag" }
+
+function M.scope_of(view)
+    if M.regrouped[view] then
+        return "active"
+    end
+    return view
+end
+
+function M.group_of(view)
+    if view == "by_urgency" then
+        return "urgency"
+    elseif view == "by_time" then
+        return "time"
+    elseif view == "by_tag" then
+        return "tag"
+    end
+    return "status"
+end
+
+function M.compose(scope, group)
+    if scope == "active" and group_views[group] then
+        return group_views[group]
+    end
+    return scope
+end
+
+function M.supports_group(scope)
+    return scope == "active" or scope == "today" or scope == "emergency"
+end
+
+function M.group_view(scope, group)
+    if M.supports_group(scope) and group_views[group] then
+        return group_views[group]
+    end
+    return scope
+end
 
 -- Only the four scope tabs carry a count badge; the regrouped tabs show the
 -- same population as "active" so repeating the number wastes header width.

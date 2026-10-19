@@ -13,10 +13,14 @@ local planner = require("todo.planning").new(svc.store.workspace, svc)
 planner:add(first.sync_uuid)
 planner:add(second.sync_uuid)
 local calls = 0
+local note_sent = false
 local ai = require("todo.ai").new(svc.store.workspace, svc, {
     transport = function(opts, cb)
         calls = calls + 1
         local index = calls
+        if vim.json.encode(opts.body.messages):find("Check each morning and evening.", 1, true) then
+            note_sent = true
+        end
         local context = vim.json.decode(opts.body.messages[2].content:match("Workspace snapshot:\n(.*)"))
         vim.defer_fn(function()
             if index == 2 or index == 4 or index == 6 then
@@ -92,6 +96,7 @@ round.answers.q = { selected = { a = true }, notes = { a = "Check each morning a
 ctl:submit(nil, round)
 done("paused")
 assert(calls == 2 and ctl.state.last_error)
+assert(note_sent, "option notes must reach the outgoing AI request")
 ui.close()
 o = todo.plan()
 vim.api.nvim_set_current_win(o.questions.winid)

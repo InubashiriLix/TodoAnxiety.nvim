@@ -19,6 +19,16 @@ local ok, err = xpcall(function()
     diag.record({ operation = "test", stage = "redaction", error = "Bearer redaction_test_secret" })
     local log = table.concat(vim.fn.readfile(diag.path()), "\n")
     assert(not log:find("redaction_test_secret", 1, true))
+    diag.record({ operation = "test", stage = "newline", error = "first diagnostic line\nsecond diagnostic line" })
+    local opened, open_error = pcall(diag.open)
+    assert(opened, open_error)
+    local rendered = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    assert(
+        rendered:find("first diagnostic line", 1, true)
+            and rendered:find("second diagnostic line", 1, true),
+        "diagnostics must render multiline errors"
+    )
+    vim.cmd("bwipeout!")
     server = uv.new_tcp()
     server:bind("127.0.0.1", 0)
     local port = server:getsockname().port

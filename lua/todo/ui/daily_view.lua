@@ -112,63 +112,91 @@ local function doc(width)
     end
     return d
 end
-local labels = {
-    preparing = { "Prepare", "准备任务" },
-    reviewing = { "Understand", "理解任务" },
-    awaiting = { "Questions", "补充信息" },
-    permission = { "Access request", "资料访问申请" },
-    assembling = { "Arrange", "编排中" },
-    paused = { "Paused", "已暂停" },
-    review = { "Review", "审批方案" },
-    applied = { "Applied", "已应用" },
-}
-local function label(status)
-    local a = labels[status] or { status, status }
-    return L(a[1], a[2])
-end
-local function duration(m)
-    m = tonumber(m) or 0
-    return m >= 60 and tostring(math.floor(m / 60)) .. "h" .. (m % 60 > 0 and " " .. tostring(m % 60) .. "m" or "")
-        or m .. "m"
-end
-function M.header(ctl, width)
+function M.header(ctl, width, progress)
     local d = doc(width)
-    local done, total = ctl:counts()
+    local p = progress or ctl:progress()
     local state = ctl.state
+    local phase = ctl:phase()
+    local phase_names = {
+        preparing = L("Prepare", "准备"),
+        clarifying = L("Understand & clarify", "理解与澄清"),
+        arranging = L("Arrange", "编排"),
+        reviewing = L("Review", "审批"),
+        applied = L("Applied", "已应用"),
+        paused = L("Paused", "已暂停"),
+        error = L("Error", "错误"),
+    }
+    local mode = (ctl.mode or "plan"):lower()
+    local mode_names = {
+        plan = L("PLAN · suggestions only", "PLAN · 仅建议"),
+        build = L("BUILD · auto docs", "BUILD · 自动描述/备注"),
+        auto = L("AUTO · auto apply", "AUTO · 自动应用"),
+    }
     d:line({
-        { "  " .. L("TODAY", "今日编排"), "TodoDailyAccent" },
+        { "  " .. L("DAILY PLAN", "每日规划"), "TodoDailyAccent" },
         { "  " .. ctl.date, "TodoDailyMuted" },
-        { "   " .. label(ctl.permission and "permission" or state.status), "TodoDailyLabel" },
-        { "   " .. (ctl.mode or "plan"):upper() .. " [M]", "TodoDailyKey" },
+        { "   " .. (phase_names[phase] or phase), "TodoDailyLabel" },
+        { "   " .. (mode_names[mode] or mode:upper()), "TodoDailyKey" },
     })
-    d:line({
-        { "  " .. duration(state.capacity_minutes), "TodoDailyLabel" },
-        { " " .. L("work", "工作"), "TodoDailyMuted" },
-        { "   " .. duration(state.reserve_minutes), "TodoDailyLabel" },
-        { " " .. L("reserve", "预留"), "TodoDailyMuted" },
-        { "   " .. done .. "/" .. total .. " " .. L("reviewed", "已检查"), "TodoDailyAccent" },
-        { state.text_only and "   " .. L("TEXT ONLY", "仅文字") or "", "TodoDailyLock" },
-    })
-    local step = state.status == "preparing" and 1
-        or (state.status == "review" or state.status == "applied") and 4
-        or state.status == "assembling" and 3
+    local step = phase == "preparing" and 1
+        or phase == "clarifying" and 2
+        or phase == "arranging" and 3
+        or phase == "reviewing" and 4
+        or phase == "applied" and 5
+        or (state.status == "review" and 4)
+        or (state.status == "assembling" and 3)
         or 2
     local parts = { { "  " } }
     for i, t in ipairs({
         L("Prepare", "准备"),
-        L("Understand & clarify", "理解与澄清"),
+        L("Understand", "澄清"),
         L("Arrange", "编排"),
-        L("Approve", "审批"),
+        L("Review", "审批"),
     }) do
         if i > 1 then
             parts[#parts + 1] = { "  ›  ", "TodoDailyMuted" }
         end
+        local mark = (phase == "applied" or i < step) and "✓ " or i == step and "● " or "○ "
         parts[#parts + 1] = {
-            (i < step and "✓ " or i == step and "● " or "○ ") .. t,
+            mark .. t,
             i == step and "TodoDailyAccent" or "TodoDailyMuted",
         }
     end
     d:line(parts)
+    local current = ctl:current()
+    local current_text = current and ("  ·  " .. (current.ref or "") .. " " .. (current.title or "")) or ""
+    d:line({
+        { "  " .. L("Tasks", "任务") .. " " .. (p.checked + p.deferred) .. "/" .. p.total, "TodoDailyLabel" },
+        { "  ·  " .. L("checked", "已检查") .. " " .. p.checked, "TodoDailyMuted" },
+        { "  ·  " .. L("deferred", "已跳过") .. " " .. p.deferred, "TodoDailyLock" },
+        { "  ·  " .. L("left", "剩余") .. " " .. p.remaining, "TodoDailyMuted" },
+        { current_text, "TodoDailyMuted" },
+        { state.text_only and "  ·  " .. L("TEXT ONLY", "仅文字") or "", "TodoDailyLock" },
+    })
+    local next_text
+    if ctl.busy then
+        next_text = L("Waiting for AI…", "等待 AI…")
+    elseif phase == "preparing" then
+        next_text = L("Space select · w start · M mode · F1 help", "Space 选任务 · w 开始 · M 模式 · F1 帮助")
+    elseif phase == "clarifying" then
+        next_text = state.status == "awaiting"
+                and L(
+                    "Enter select · u no answer · g/c finish with known info · s defer",
+                    "Enter 选择 · u 这题不要答案 · g/c 已知信息结束 · s 稍后处理"
+                )
+            or L("w continue · p adjust", "w 继续 · p 调整")
+    elseif phase == "arranging" then
+        next_text = L("AI is arranging the plan. Ctrl-c stops.", "AI 正在编排，Ctrl-c 可停止。")
+    elseif phase == "reviewing" then
+        next_text = L("v review draft · a apply in review", "v 查看草稿 · 审批页 a 应用")
+    elseif phase == "applied" then
+        next_text = L("Done · U undo on the task page", "已完成 · 任务页 U 撤回")
+    elseif phase == "error" then
+        next_text = L("x fix options · r retry · s defer · B budget", "x 修复选项 · r 重试 · s 跳过 · B 预算")
+    else
+        next_text = L("w continue · p adjust", "w 继续 · p 调整")
+    end
+    d:line({ { "  " .. L("Next", "下一步") .. ": " .. next_text, "TodoDailyAccent" } })
     return d
 end
 local function metadata(task)
@@ -183,7 +211,11 @@ function M.tasks(ctl, svc, selected, width, readonly)
     local key =
         { tostring(width), tostring(ctl.task_version), tostring(math.floor(os.time() / 60)), tostring(readonly) }
     for _, e in ipairs(ctl.state.queue) do
-        key[#key + 1] = e.uuid .. (e.missing and "m" or "") .. (e.selected and "s" or "") .. (e.locked and "l" or "")
+        key[#key + 1] = e.uuid
+            .. (e.missing and "m" or "")
+            .. (e.selected and "s" or "")
+            .. (e.locked and "l" or "")
+            .. (e.deferred and "d" or "")
     end
     key = table.concat(key, ":")
     if cache and cache.card_key == key then
@@ -238,6 +270,7 @@ function M.tasks(ctl, svc, selected, width, readonly)
         if not e.missing then
             local task = svc.store:get(e.task_id)
             local included = e.selected == true
+            local deferred = e.deferred ~= nil and e.deferred ~= false
             local focused = i == selected
             local textgroup = included and "TodoDailyLabel" or "TodoDailyExcluded"
             local mark = require("todo.ui.task_mark")
@@ -250,7 +283,10 @@ function M.tasks(ctl, svc, selected, width, readonly)
             d.rows[i] = #d.lines + 1
             d:line(bar_parts({
                 { e.locked and "◆ " or "  ", "TodoDailyLock" },
-                { included and "[x] " or "[ ] ", included and "TodoDailyIncluded" or "TodoDailyExcluded" },
+                {
+                    deferred and "[-] " or included and "[x] " or "[ ] ",
+                    deferred and "TodoDailyLock" or included and "TodoDailyIncluded" or "TodoDailyExcluded",
+                },
                 {
                     "[P" .. (task and task.priority or e.priority or 3) .. "] ",
                     priority_group,
@@ -266,6 +302,7 @@ function M.tasks(ctl, svc, selected, width, readonly)
                         not included and "TodoDailyExcluded"
                             or due_group,
                     },
+                    { deferred and ("  ·  " .. L("deferred", "已跳过")) or "", "TodoDailyLock" },
                 }, rest_left_group, right_group), focused and "TodoDailySelected" or nil)
                 local tags = {}
                 for _, t in ipairs(task.tags or {}) do
@@ -500,7 +537,59 @@ function M.modes(selected, width)
     })
     return d
 end
-function M.timeline(ctl, svc, selected, session, width, show_details, queue_open)
+local function error_advice(err)
+    local text = tostring(err or ""):lower()
+    if text:find("429", 1, true) or text:find("rate limit", 1, true) then
+        return L(
+            "The provider is rate-limiting. Wait a moment, then retry; or skip this task.",
+            "服务商限流。稍等后重试，或跳过当前任务。"
+        )
+    end
+    if text:find("预算", 1, true) or text:find("budget", 1, true) then
+        return L(
+            "The cost budget was reached. Press B to raise it, or skip this task.",
+            "已达到费用预算。按 B 调整预算，或跳过当前任务。"
+        )
+    end
+    if text:find("understanding evidence", 1, true) then
+        return L(
+            "Evidence could not be verified. Retry, edit the answer, or finish with assumptions.",
+            "依据未核对。可重试、修改答案，或按假设结束。"
+        )
+    end
+    if text:find("read the full current task", 1, true) then
+        return L("The task text changed. Retry to read it again.", "任务内容已变化。重试以重新读取。")
+    end
+    if
+        text:find("api request limit", 1, true)
+        or text:find("request budget", 1, true)
+        or text:find("规划请求额度", 1, true)
+    then
+        return L(
+            "The request limit was reached. Finish with assumptions or restart the workflow.",
+            "已达到请求上限。按假设结束，或重新开始流程。"
+        )
+    end
+    if
+        text:find("401", 1, true)
+        or text:find("403", 1, true)
+        or text:find("unauthorized", 1, true)
+        or text:find("api key", 1, true)
+    then
+        return L("Authentication failed. Run :Todo ai key or :Todo ai setup.", "认证失败。运行 :Todo ai key 或 :Todo ai setup。")
+    end
+    if text:find("timeout", 1, true) or text:find("http 5", 1, true) or text:find("connection", 1, true) then
+        return L(
+            "The network request failed. Retry; if it persists, open diagnostics.",
+            "网络请求失败。重试；持续失败请打开诊断。"
+        )
+    end
+    return L(
+        "Retry, skip this task, or open fix options with x.",
+        "可重试、跳过当前任务，或按 x 打开修复选项。"
+    )
+end
+function M.timeline(ctl, svc, selected, session, width, show_details, queue_open, onboarding)
     local d = doc(width)
     local entry = (ctl.state.status == "preparing" or queue_open) and ctl.state.queue[selected] or ctl:current()
     if queue_open then
@@ -540,6 +629,14 @@ function M.timeline(ctl, svc, selected, session, width, show_details, queue_open
         d:line("")
     end
     if ctl.state.status == "preparing" then
+        if onboarding then
+            d:line({ { "  " .. L("QUICK START", "快速开始"), "TodoDailyAccent" } })
+            d:text(L("1. Space select tasks · w start", "1. Space 选任务 · w 开始"))
+            d:text(L("2. Enter answer · u no answer needed · s defer task", "2. Enter 回答 · u 这题不要答案 · s 稍后处理"))
+            d:text(L("3. v review draft · a apply · U undo on task page", "3. v 查看草稿 · a 应用 · 任务页 U 撤回"))
+            d:text(L("M switch plan/build/auto · F1 full help", "M 切换 plan/build/auto · F1 完整帮助"), "TodoDailyMuted")
+            d:line("")
+        end
         d:line({ { "  " .. L("BEFORE STARTING", "开始前"), "TodoDailyAccent" } })
         d:text(
             L(
@@ -605,27 +702,81 @@ function M.timeline(ctl, svc, selected, session, width, show_details, queue_open
         d:text(ctl.partial)
     elseif ctl.busy then
         d.spinner_row = #d.lines
+        local progress = ctl:progress()
+        local current = ctl:current()
+        local elapsed = ctl.request_started and math.max(0, os.time() - ctl.request_started) or 0
+        local text = ctl.stage or L("Reading context…", "正在了解任务…")
+        if current then
+            text = text .. " · " .. (current.ref or "") .. " " .. (current.title or "")
+        end
+        text = text .. " · " .. (progress.checked + progress.deferred) .. "/" .. progress.total
+        if elapsed > 0 then
+            text = text .. " · " .. elapsed .. L("s", " 秒")
+        end
         d:line({
             { "  ⠋ ", "TodoDailyAccent" },
-            { ctl.stage or L("Reading context…", "正在了解任务…"), "TodoDailyMuted" },
+            { text, "TodoDailyMuted" },
         })
     elseif ctl.cache.partial then
         d:line({ { "  " .. L("Interrupted response", "中断的回复"), "TodoDailyLock" } })
         d:text(ctl.cache.partial.text or "")
+    end
+    local events = ctl.state.events or {}
+    if #events > 0 then
+        d:line("")
+        d:line({ { "  " .. L("ACTIVITY", "最近操作"), "TodoDailyAccent" } })
+        local icons = {
+            reviewed = "✓",
+            deferred = "⏭",
+            restored = "↺",
+            applied = "✎",
+            arranging = "→",
+            draft = "✓",
+            question_skipped = "⏭",
+            warning = "⚠",
+        }
+        local highlights = {
+            warning = "TodoDailyLock",
+            deferred = "TodoDailyLock",
+            restored = "TodoDailyAccent",
+            applied = "TodoDailyIncluded",
+            draft = "TodoDailyIncluded",
+            reviewed = "TodoDailyIncluded",
+        }
+        local first = math.max(1, #events - 5)
+        for i = first, #events do
+            local event = events[i]
+            d:line({
+                { "  " .. (icons[event.kind] or "·") .. " ", highlights[event.kind] or "TodoDailyMuted" },
+                { event.text or "", "TodoDailyMuted" },
+            })
+        end
     end
     if ctl.state.last_error then
         d:line("")
         local err = ctl.state.last_error
         if err:lower():find("understanding evidence", 1, true) then
             err = L(
-                "AI evidence could not be verified. Your answers are saved. Retry with r, or edit and resubmit.",
-                "AI 的依据引用未通过核对，答案已保留。按 r 重试，或修改答案后重新提交。"
+                "AI evidence could not be verified. Your answers are saved.",
+                "AI 的依据引用未通过核对，答案已保留。"
             )
         else
             err = err:gsub("[^%s]+%.lua:%d+: ", "")
         end
-        d:text("! " .. err, "TodoDailyError")
-        d:keys({ { "r", L("Retry", "重试") }, { ":Todo diagnostics", L("Error details", "错误详情") } })
+        d:line({ { "  ⚠ " .. L("ERROR", "错误"), "TodoDailyError" } })
+        d:text(err, "TodoDailyError")
+        d:text(L("Suggested: ", "建议：") .. error_advice(ctl.state.last_error), "TodoDailyMuted")
+        local error_keys = {
+            { "x", L("Fix options", "修复选项") },
+            { "r", L("Retry", "重试") },
+        }
+        if ctl:budget_error() then
+            table.insert(error_keys, { "B", L("Adjust budget", "调整预算") })
+        end
+        if ctl:current() then
+            table.insert(error_keys, { "s", L("Skip this task", "跳过当前任务") })
+        end
+        d:keys(error_keys)
     end
     return d
 end

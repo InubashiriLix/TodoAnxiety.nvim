@@ -1139,6 +1139,28 @@ if nui_ok then
             end),
             "second Esc should close the dashboard"
         )
+        -- Scope and grouping are independent: by_time is active + time, not a tab.
+        panel.open({ mode = "float", view = "by_time" })
+        state = panel.inspect_state()
+        eq(state.scope, "active")
+        eq(state.group, "time")
+        eq(state.view, "by_time")
+        local header = table.concat(vim.api.nvim_buf_get_lines(state.owner.header.bufnr, 0, -1, false), "\n")
+        assert(header:find("Group", 1, true), "header must show the grouping selector")
+        assert(not header:find("Level", 1, true), "regrouped modes must not be top-level tabs")
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("o", true, false, true), "xt", false)
+        vim.wait(30)
+        eq(panel.inspect_state().group, "tag")
+        eq(panel.inspect_state().view, "by_tag")
+        -- Cycle to a scope that does not need planning data (today is covered elsewhere).
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("[", true, false, true), "xt", false)
+        vim.wait(30)
+        eq(panel.inspect_state().scope, "archived")
+        eq(panel.inspect_state().group, "status")
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("]", true, false, true), "xt", false)
+        vim.wait(30)
+        eq(panel.inspect_state().scope, "active")
+        panel.close()
         package.loaded.todo = nil
     end)
 

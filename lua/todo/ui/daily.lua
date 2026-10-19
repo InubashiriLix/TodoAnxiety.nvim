@@ -7,6 +7,29 @@ local current
 local function L(en, zh)
     return require("todo.config").get().language == "zh-CN" and zh or en
 end
+-- Keep spend and the remaining allowance visible; budgets are optional.
+local function budget_status(usage)
+    local ai = require("todo.config").get().ai
+    local used = usage.unknown > 0 and L("cost partially unknown", "部分费用未知")
+        or string.format("~$%.5f", usage.usd)
+    if not ai.session_budget_usd and not ai.daily_budget_usd then
+        return used
+    end
+    local parts = { used }
+    if ai.session_budget_usd then
+        parts[#parts + 1] = string.format("/ $%.2f", ai.session_budget_usd)
+        parts[#parts + 1] =
+            string.format(L("left $%.5f", "剩余 $%.5f"), math.max(0, ai.session_budget_usd - usage.usd))
+    end
+    if ai.daily_budget_usd then
+        parts[#parts + 1] = string.format(
+            L("today $%.5f/$%.2f", "今日 $%.5f/$%.2f"),
+            usage.today_usd,
+            ai.daily_budget_usd
+        )
+    end
+    return table.concat(parts, " · ")
+end
 local function write(pop, lines, width)
     if not pop or not vim.api.nvim_buf_is_valid(pop.bufnr) then
         return
@@ -73,6 +96,10 @@ function M.open(opts)
         chat_mode = false,
         show_composer = false,
     }
+    owner.onboarding = not ws.store:get_setting("daily_onboarding_seen")
+    if owner.onboarding then
+        ws.store:set_setting("daily_onboarding_seen", true)
+    end
     current = owner
     owner.header = popup(false, false)
     owner.timeline = popup()
@@ -87,7 +114,7 @@ function M.open(opts)
     local requested, rendered = 0, 0
     local cache_pending = false
     local layout_signature
-    local render, reflow, submit, focus_input, edit_task, help, focus_pane, return_to_choices, bind_panes
+    local render, reflow, submit, focus_input, edit_task, help, focus_pane, return_to_choices, bind_panes, adjust_budget
     local function safe(fn)
         return function(...)
             local args = { ... }
@@ -160,7 +187,11 @@ function M.open(opts)
         round.answers[q.id] = round.answers[q.id] or { selected = {}, notes = {} }
         return round.answers[q.id]
     end
+    local suppress_save = false
     local function save_draft(pop, ctx)
+        if suppress_save then
+            return
+        end
         local value = buffer_text(pop)
         ctl.cache.drafts = ctl.cache.drafts or {}
         ctl.cache.drafts[ctx.key] = value
@@ -345,7 +376,7 @@ function M.open(opts)
                 boxes[#boxes + 1] = Layout.Box(owner.footer, { size = 2 })
             end
         else
-            boxes = { Layout.Box(owner.header, { size = 3 }) }
+            boxes = { Layout.Box(owner.header, { size = 4 }) }
             if ctl.state.status == "preparing" and size.width >= 104 and size.height >= 26 then
                 boxes[#boxes + 1] = Layout.Box(
                     { Layout.Box(owner.questions, { size = "55%" }), Layout.Box(owner.timeline, { grow = 1 }) },
@@ -630,17 +661,50 @@ function M.open(opts)
             if valid(owner.composer) and vim.trim(buffer_text(owner.composer)) ~= "" then
                 owner.show_composer = true
             end
-            reflow()
-            local done, total = ctl:counts()
-            local usage = ctl.ai:usage(ctl.id)
             local entry = ctl:current()
+            local round = round_for(entry)
+            local round_key = round and round.id or nil
+            local new_round = round_key ~= nil and round_key ~= owner.round_seen
+            if new_round then
+                owner.round_seen = round_key
+            end
+            -- Clear the "waiting for reply" state before laying out: otherwise the
+            -- new question pane is omitted until some unrelated event re-renders.
+            local focus_questions = false
+            if round and not ctl.busy then
+                if owner.awaiting then
+                    owner.awaiting = false
+                    new_round = true
+                end
+                if new_round then
+                    -- Rebind the composer to the new question. Without this the
+                    -- first round after preparation keeps the intention context,
+                    -- so typed supplements are saved outside the answer.
+                    owner.composing_key = nil
+                    select_context(true)
+                    focus_questions = owner.follow_reply ~= false
+                end
+            end
+            if focus_questions then
+                owner.tiny_view, owner.focused_pane = "questions", "questions"
+                if owner.maximized then
+                    owner.maximized = "questions"
+                end
+            end
+            reflow()
+            if focus_questions and valid(owner.questions) then
+                vim.api.nvim_set_current_win(owner.questions.winid)
+            end
+            local progress = ctl:progress()
+            local done, total = progress.checked + progress.deferred, progress.total
+            local usage = ctl.ai:usage(ctl.id)
             local session = entry and ctl:item(entry)
             local mode = vim.api.nvim_get_mode().mode
             local vim_mode = mode:sub(1, 1) == "i" and "INSERT" or mode:match("^[vV\22]") and "VISUAL" or "NORMAL"
             local function width(pop)
                 return valid(pop) and vim.api.nvim_win_get_width(pop.winid) or math.max(1, vim.o.columns - 4)
             end
-            view.paint(owner.header, view.header(ctl, width(owner.header)), ns)
+            view.paint(owner.header, view.header(ctl, width(owner.header), progress), ns)
             local timeline = view.timeline(
                 ctl,
                 svc,
@@ -648,7 +712,8 @@ function M.open(opts)
                 session,
                 width(owner.timeline),
                 owner.show_details,
-                owner.queue_open
+                owner.queue_open,
+                owner.onboarding
             )
             local old_view
             if valid(owner.timeline) then
@@ -660,6 +725,9 @@ function M.open(opts)
             end
             owner.reply_version = reply_version
             view.paint(owner.timeline, timeline, ns)
+            if owner.onboarding and ctl.state.status ~= "preparing" then
+                owner.onboarding = false
+            end
             if owner.spinner_row ~= timeline.spinner_row then
                 vim.api.nvim_buf_clear_namespace(owner.timeline.bufnr, spinner_ns, 0, -1)
             end
@@ -693,14 +761,6 @@ function M.open(opts)
             else
                 question_doc = view.questions(round_for(entry), owner.tab, owner.option, width(owner.questions))
             end
-            local round = round_for(entry)
-            if round and not ctl.busy then
-                if owner.awaiting then
-                    owner.awaiting = false
-                    owner.composing_key = nil
-                    select_context(true)
-                end
-            end
             local screen_key = ctl.permission and ("permission:" .. (ctl.permission.id or ctl.permission.target or ""))
                 or owner.mode_picker and "modes"
                 or (ctl.state.status == "preparing" or owner.queue_open) and "tasks"
@@ -729,8 +789,7 @@ function M.open(opts)
                 end
             end
             local width = valid(owner.footer) and vim.api.nvim_win_get_width(owner.footer.winid) or vim.o.columns - 4
-            local cost = usage.unknown > 0 and L("cost partially unknown", "部分费用未知")
-                or string.format("~$%.5f", usage.usd)
+            local cost = budget_status(usage)
             local editing = vim.api.nvim_get_current_buf() == owner.composer.bufnr
             if valid(owner.composer) then
                 pcall(function()
@@ -763,8 +822,15 @@ function M.open(opts)
             elseif ctl.busy then
                 hint("Ctrl-c", L("Stop", "停止"))
             elseif ctl.state.last_error then
+                hint("x", L("Fix options", "修复选项"))
+                if ctl:budget_error() then
+                    hint("B", L("Adjust budget", "调整预算"))
+                elseif ctl:current() then
+                    hint("s", L("Skip to the next item", "跳过并处理下一项"))
+                end
                 hint("r", L("Retry saved request", "重试已保存的请求"))
                 if choosing and round then
+                    hint("u", L("This question needs no answer", "这题不需要答案"))
                     hint(keys.label("edit_note"), L("Edit answer", "修改答案"))
                     hint(keys.label("preview"), L("Preview answers", "提交预览"))
                 end
@@ -781,6 +847,12 @@ function M.open(opts)
                 end
                 hint(keys.label("edit_note"), L("Edit task", "编辑任务"))
                 hint("A", L("Add existing", "添加已有"))
+                local selected_entry = ctl.state.queue[owner.selection]
+                hint(
+                    "s",
+                    selected_entry and selected_entry.deferred and L("Restore task", "恢复任务")
+                        or L("Defer task", "稍后处理")
+                )
             elseif owner.queue_open then
                 hint("b", L("Back to questions", "返回问题"))
             elseif preview then
@@ -793,15 +865,17 @@ function M.open(opts)
                     hint(keys.label("select"), L("Select", "选择"))
                     hint(keys.label("supplement"), L("Supplement", "补充"))
                     hint(keys.label("edit_note"), L("Add note", "附加说明"))
-                    hint(keys.label("chat"), L("Message AI", "给 AI 发消息"))
-                    hint("T", L("Prompt presets", "提示词"))
+                    hint("u", L("No answer", "这题不需要答案"))
+                    hint(keys.label("preview"), L("Preview", "提交预览"))
+                    hint("s", L("Skip task", "跳过任务"))
+                    hint("g/c", L("Finish with known info", "按已知信息结束"))
+                else
+                    hint(keys.label("preview"), round and L("Preview answers", "提交预览") or L("Continue", "继续"))
                     hint("D", L("Task context", "任务原文"))
-                    hint("d", L("Details", "详情"))
-                end
-                hint(keys.label("preview"), round and L("Preview answers", "提交预览") or L("Continue", "继续"))
-                hint("D", L("Task context", "任务原文"))
-                if round then
-                    hint(keys.label("chat"), L("Message AI", "给 AI 发消息"))
+                    if round then
+                        hint("s", L("Skip task", "跳过任务"))
+                        hint("g/c", L("Finish with known info", "按已知信息结束"))
+                    end
                 end
             end
             if vim_mode == "NORMAL" then
@@ -1031,7 +1105,11 @@ function M.open(opts)
             owner.chat_mode = false
             owner.awaiting = true
             owner.show_composer = false
+            suppress_save = true
             vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, { "" })
+            suppress_save = false
+            ctl.cache.drafts[owner.composing_key] = ""
+            ctl:save_cache()
             owner.sent_text[owner.composing_key] = ""
             ctl:message(text)
             owner.follow_reply = true
@@ -1045,7 +1123,10 @@ function M.open(opts)
         -- A lazily retained editor may belong to the previous question/task.
         -- Its draft is already saved, but must never be sent as this task's answer.
         local same_task = entry and ctx.entry and ctx.entry.uuid == entry.uuid
-        local extra = same_task and not ctx.round and text or ""
+        -- Text only counts as an answer when the composer is bound to a specific
+        -- question; otherwise (preview/task context) it must travel as an extra
+        -- note, even if a round is still open.
+        local extra = same_task and not ctx.question and text or ""
         -- Continue resumes the workflow, including a failed final assembly with
         -- no current task. Retained notes are not a new answer for this request.
         if ctl.state.status == "paused" and not round and extra:match("^%s*$") then
@@ -1080,7 +1161,11 @@ function M.open(opts)
         owner.chat_mode = false
         owner.show_composer = false
         if valid(owner.composer) then
+            suppress_save = true
             vim.api.nvim_buf_set_lines(owner.composer.bufnr, 0, -1, false, { "" })
+            suppress_save = false
+            ctl.cache.drafts[owner.composing_key] = ""
+            ctl:save_cache()
             owner.sent_text[owner.composing_key] = ""
         end
         local transcript = (round and require("todo.ai.questions").transcript(round) or "") .. "\n" .. extra
@@ -1088,6 +1173,76 @@ function M.open(opts)
         owner.follow_reply = true
         render()
         focus_pane("timeline")
+    end
+    adjust_budget = function()
+        assert(not ctl.busy, "Stop the current request first")
+        local ai = require("todo.config").get().ai
+        local usage = ctl.ai:usage(ctl.id)
+        local today = ctl.ai:usage().today_usd
+        local budget_error = ctl:budget_error()
+        local function prompt_number(prompt, default, done)
+            vim.ui.input({ prompt = prompt, default = string.format("%.2f", default) }, function(value)
+                if value == nil then
+                    return
+                end
+                local n = tonumber(value)
+                if not n or n <= 0 then
+                    vim.notify(L("Enter a positive number", "请输入正数"), vim.log.levels.WARN)
+                    return
+                end
+                done(n)
+            end)
+        end
+        local function finish()
+            if not budget_error then
+                ctl:emit()
+                return
+            end
+            ctl.state.last_error = nil
+            ctl:save()
+            ctl:start()
+        end
+        local function ask_daily(next)
+            if not ai.daily_budget_usd or today < ai.daily_budget_usd then
+                return next()
+            end
+            prompt_number(
+                string.format(L("Daily budget in USD (used ~$%.5f): ", "今日预算（美元，已用 ~$%.5f）："), today),
+                math.max(ai.daily_budget_usd, today + 0.5),
+                function(n)
+                    if n <= today then
+                        vim.notify(
+                            L("Daily budget must exceed today's usage", "今日预算必须高于今日已用费用"),
+                            vim.log.levels.WARN
+                        )
+                        return
+                    end
+                    ai.daily_budget_usd = n
+                    next()
+                end
+            )
+        end
+        if budget_error == "daily" then
+            return ask_daily(finish)
+        end
+        prompt_number(
+            string.format(
+                L("Planning budget in USD (used ~$%.5f): ", "本次规划预算（美元，已用 ~$%.5f）："),
+                usage.usd
+            ),
+            math.max(ai.session_budget_usd or 0, usage.usd + 0.5),
+            function(n)
+                if n <= usage.usd then
+                    vim.notify(
+                        L("Planning budget must exceed this session's usage", "本次规划预算必须高于本次已用费用"),
+                        vim.log.levels.WARN
+                    )
+                    return
+                end
+                ai.session_budget_usd = n
+                ask_daily(finish)
+            end
+        )
     end
     edit_task = function(add)
         assert(not ctl.busy, "Stop the request before editing")
@@ -1145,6 +1300,17 @@ function M.open(opts)
                         label = L(
                             "Retry failed request with saved answers",
                             "使用已保存的答案重试失败请求"
+                        ),
+                    },
+                    {
+                        key = "x",
+                        label = L("Open fix options after an error", "出错后打开修复选项"),
+                    },
+                    {
+                        key = "B",
+                        label = L(
+                            "Raise the AI budget and continue after a budget pause",
+                            "预算中断后调整 AI 预算并继续"
                         ),
                     },
                     { key = "Ctrl-q", label = L("Pause and close", "暂停并关闭") },
@@ -1209,11 +1375,15 @@ function M.open(opts)
                             "权限申请：允许一次／本会话允许相同请求／拒绝"
                         ),
                     },
-                    { key = "C / B", label = L("Work / reserve minutes", "工作／预留分钟") },
+                    { key = "C / B (preparation)", label = L("Work / reserve minutes", "工作／预留分钟") },
                     { key = "L", label = L("Lock selected task", "固定／解锁所选任务") },
                     { key = "a/e (preparation)", label = L("Create/edit task", "新增／编辑任务") },
                     { key = "A (preparation)", label = L("Add existing task", "添加已有任务") },
-                    { key = "s", label = L("Defer current task", "稍后处理当前任务") },
+                    {
+                        key = "u (choices)",
+                        label = L("This question needs no answer", "这题不需要答案"),
+                    },
+                    { key = "s", label = L("Defer / restore task", "稍后处理／恢复任务") },
                     {
                         key = "g (choices) / c (context)",
                         label = L("Continue / finish using known facts", "继续／根据已有信息完成当前项"),
@@ -1299,6 +1469,113 @@ function M.open(opts)
         owner.chat_mode = false
         owner.note_option = owner.option <= #q.options and owner.option or nil
         focus_input(true)
+    end
+    local function retry_saved()
+        if ctl.busy or not ctl.state.last_error then
+            return
+        end
+        if ctl.state.status == "preparing" then
+            submit()
+            return
+        end
+        local entry = ctl:current()
+        local session = entry and ctl:item(entry)
+        local ctx = owner.contexts[owner.composing_key]
+        if session and session.round and ctx and ctx.round and session.round.id == ctx.round.id and ctx.question then
+            local saved = session.round.answers[ctx.question.id] or {}
+            local sent = ctx.option and (saved.notes or {})[ctx.option.id] or saved.custom
+            if buffer_text(owner.composer) == (sent or "") then
+                owner.sent_text[owner.composing_key] = sent or ""
+            end
+        end
+        ctl:start()
+    end
+    local function finish_known()
+        if ctl.busy or owner.queue_open or owner.mode_picker or ctl.permission then
+            return
+        end
+        if ctl.state.status == "preparing" then
+            local ok, err = ctl:prepare(false)
+            assert(ok, err)
+        end
+        local round = round_for(ctl:current())
+        if round then
+            local ctx = owner.contexts[owner.composing_key]
+            if ctx and ctx.round and ctx.round.id == round.id then
+                owner.sent_text[owner.composing_key] = buffer_text(owner.composer)
+            end
+            ctl:submit(
+                L("Finish this item with known information; list assumptions.", "根据已知信息完成当前项，列明假设。"),
+                round,
+                nil,
+                true
+            )
+        else
+            ctl:start()
+        end
+    end
+    local function fix_error()
+        if ctl.busy then
+            vim.notify(L("Wait for the current request or press Ctrl-c.", "等待当前请求结束，或按 Ctrl-c。"), vim.log.levels.WARN)
+            return
+        end
+        local actions = {}
+        if ctl.state.last_error then
+            actions[#actions + 1] = {
+                label = L("Retry the saved request", "重试已保存的请求"),
+                run = retry_saved,
+            }
+        end
+        if ctl:budget_error() then
+            actions[#actions + 1] = {
+                label = L("Adjust the cost budget", "调整费用预算"),
+                run = adjust_budget,
+            }
+        end
+        if round_for(ctl:current()) then
+            actions[#actions + 1] = {
+                label = L("Finish this task with assumptions", "用假设结束当前任务"),
+                run = finish_known,
+            }
+        end
+        if ctl:current() then
+            actions[#actions + 1] = {
+                label = L("Skip this task for now", "暂时跳过这个任务"),
+                run = function()
+                    ctl:skip()
+                end,
+            }
+        end
+        local err = tostring(ctl.state.last_error or ""):lower()
+        if
+            err:find("401", 1, true)
+            or err:find("403", 1, true)
+            or err:find("unauthorized", 1, true)
+            or err:find("api key", 1, true)
+        then
+            actions[#actions + 1] = {
+                label = L("Open AI setup / key", "打开 AI 设置／密钥"),
+                run = function()
+                    require("todo.ui.ai_setup").open()
+                end,
+            }
+        end
+        actions[#actions + 1] = {
+            label = L("Open diagnostics", "打开诊断信息"),
+            run = function()
+                require("todo.diagnostics").open()
+            end,
+        }
+        vim.ui.select(actions, {
+            prompt = L("How do you want to fix this?", "你想如何修复？"),
+            format_item = function(action)
+                return action.label
+            end,
+        }, function(action)
+            if action then
+                action.run()
+            end
+        end)
     end
     for _, pop in ipairs({ owner.timeline, owner.questions }) do
         action(pop, "input", function()
@@ -1432,30 +1709,9 @@ function M.open(opts)
         map(pop, "<C-p>", help)
         map(pop, "r", function()
             assert(not ctl.busy, "AI is still replying")
-            if ctl.state.last_error then
-                if ctl.state.status == "preparing" then
-                    submit()
-                else
-                    local entry = ctl:current()
-                    local session = entry and ctl:item(entry)
-                    local ctx = owner.contexts[owner.composing_key]
-                    if
-                        session
-                        and session.round
-                        and ctx.round
-                        and session.round.id == ctx.round.id
-                        and ctx.question
-                    then
-                        local saved = session.round.answers[ctx.question.id] or {}
-                        local sent = ctx.option and (saved.notes or {})[ctx.option.id] or saved.custom
-                        if buffer_text(owner.composer) == (sent or "") then
-                            owner.sent_text[owner.composing_key] = sent or ""
-                        end
-                    end
-                    ctl:start()
-                end
-            end
+            retry_saved()
         end)
+        map(pop, "x", fix_error)
         map(pop, "v", function()
             assert(ctl.state.draft_id, "No draft yet")
             ctl:save_cache()
@@ -1496,40 +1752,51 @@ function M.open(opts)
             owner.tiny_view = nil
             render()
         end)
-        map(pop, pop == owner.timeline and "c" or "g", function()
-            if owner.queue_open or owner.mode_picker or ctl.permission then
+        map(pop, pop == owner.timeline and "c" or "g", finish_known)
+        map(pop, "s", function()
+            if owner.mode_picker or ctl.permission then
                 return
             end
-            assert(not ctl.busy, "Stop current request first")
             if ctl.state.status == "preparing" then
-                local ok, err = ctl:prepare(false)
-                assert(ok, err)
-            end
-            local e = ctl:current()
-            local round = round_for(e)
-            if round then
-                local ctx = owner.contexts[owner.composing_key]
-                if ctx.round and ctx.round.id == round.id then
-                    owner.sent_text[owner.composing_key] = buffer_text(owner.composer)
+                local e = ctl.state.queue[owner.selection]
+                if e and e.selected and not ctl.busy then
+                    ctl:toggle_deferred(e)
+                    render()
                 end
-                ctl:submit(
-                    L(
-                        "Finish this item with known information; list assumptions.",
-                        "根据已知信息完成当前项，列明假设。"
-                    ),
-                    round,
-                    nil,
-                    true
-                )
-            else
-                ctl:start()
+                return
             end
-        end)
-        map(pop, "s", function()
-            if owner.queue_open or owner.mode_picker or ctl.permission or ctl.state.status == "preparing" then
+            if owner.queue_open or ctl.busy then
                 return
             end
             ctl:skip()
+        end)
+        map(pop, "u", function()
+            if ctl.busy or ctl.permission or owner.mode_picker or owner.queue_open then
+                return
+            end
+            local round = round_for(ctl:current())
+            local q = round and round.questions[owner.tab]
+            if not q then
+                return
+            end
+            local a = answer(round, q)
+            a.selected, a.notes, a.custom, a.declined = {}, {}, "", true
+            owner.option_positions[round.id .. ":" .. owner.tab] = owner.option
+            if owner.tab < #round.questions then
+                owner.tab = owner.tab + 1
+                owner.option = owner.option_positions[round.id .. ":" .. owner.tab] or 1
+            else
+                owner.preview_from = { tab = owner.tab, option = owner.option }
+                owner.tab = #round.questions + 1
+            end
+            owner.note_option = nil
+            ctl:event("question_skipped", L("Skipped question: ", "已跳过问题：") .. (q.header or q.question))
+            cache_later()
+            select_context(true)
+            render()
+            if valid(owner.questions) then
+                vim.api.nvim_set_current_win(owner.questions.winid)
+            end
         end)
         action(pop, "edit_note", function()
             if ctl.permission or owner.mode_picker or (owner.queue_open and ctl.state.status ~= "preparing") then
@@ -1546,21 +1813,35 @@ function M.open(opts)
                 focus_input(true)
             end
         end)
-        for key, field in pairs({ C = "capacity_minutes", B = "reserve_minutes" }) do
-            map(pop, key, function()
-                assert(not ctl.busy, "Stop current request first")
-                assert(ctl.state.status == "preparing", "Change time during preparation")
-                vim.ui.input({ prompt = field .. ": ", default = tostring(ctl.state[field]) }, function(v)
-                    if v then
-                        local n = tonumber(v)
-                        if n then
-                            ctl.state[field] = n
-                            ctl:save()
-                        end
+        map(pop, "C", function()
+            assert(not ctl.busy, "Stop current request first")
+            assert(ctl.state.status == "preparing", "Change time during preparation")
+            vim.ui.input({ prompt = "capacity_minutes: ", default = tostring(ctl.state.capacity_minutes) }, function(v)
+                if v then
+                    local n = tonumber(v)
+                    if n then
+                        ctl.state.capacity_minutes = n
+                        ctl:save()
                     end
-                end)
+                end
             end)
-        end
+        end)
+        map(pop, "B", function()
+            if ctl.state.status ~= "preparing" then
+                adjust_budget()
+                return
+            end
+            assert(not ctl.busy, "Stop current request first")
+            vim.ui.input({ prompt = "reserve_minutes: ", default = tostring(ctl.state.reserve_minutes) }, function(v)
+                if v then
+                    local n = tonumber(v)
+                    if n then
+                        ctl.state.reserve_minutes = n
+                        ctl:save()
+                    end
+                end
+            end)
+        end)
         map(pop, "L", function()
             assert(not ctl.busy, "Stop first")
             assert(ctl.state.status == "preparing", "Change locks during preparation")
@@ -1741,5 +2022,96 @@ function M.close()
 end
 function M.inspect_state()
     return current
+end
+function M.status()
+    local todo = require("todo")
+    local svc = todo._service()
+    local ws = require("todo.workspace").new(svc.store)
+    local planner = require("todo.planning").new(ws, svc)
+    local ctl = require("todo.ai.daily").new(ws, svc, todo._ai(), planner:date())
+    local progress = ctl:progress()
+    local phase = ctl:phase()
+    local current = ctl:current()
+    local event = ctl.state.events and ctl.state.events[#ctl.state.events]
+    local lines = {
+        L("Todo status", "Todo 状态"),
+        "",
+        L("phase: ", "阶段：") .. phase,
+        L("mode: ", "模式：") .. tostring(ctl.mode),
+        L("date: ", "日期：") .. tostring(ctl.date),
+        L("tasks: ", "任务：")
+            .. progress.total
+            .. L(" total · ", " 总计 · ")
+            .. progress.checked
+            .. L(" checked · ", " 已检查 · ")
+            .. progress.deferred
+            .. L(" deferred · ", " 已跳过 · ")
+            .. progress.remaining
+            .. L(" remaining", " 剩余"),
+        L("current: ", "当前：")
+            .. (current and ((current.ref or "") .. " " .. (current.title or "")) or L("none", "无")),
+    }
+    local session = current and ctl:item(current)
+    local round = session and session.round
+    if round then
+        local answered, declined = 0, 0
+        for _, question in ipairs(round.questions or {}) do
+            if require("todo.ai.questions").answered(round, question) then
+                answered = answered + 1
+            end
+            if round.answers and round.answers[question.id] and round.answers[question.id].declined then
+                declined = declined + 1
+            end
+        end
+        lines[#lines + 1] = L("questions: ", "问题：")
+            .. answered
+            .. "/"
+            .. #(round.questions or {})
+            .. L(" answered · ", " 已处理 · ")
+            .. declined
+            .. L(" skipped", " 已跳过")
+    else
+        lines[#lines + 1] = L("questions: none", "问题：无")
+    end
+    local draft = ctl.state.draft_id and ws:get("draft", ctl.state.draft_id)
+    if draft then
+        local selected = 0
+        for _, change in ipairs(draft.changes or {}) do
+            if change.selected then
+                selected = selected + 1
+            end
+        end
+        lines[#lines + 1] = L("draft: ", "草稿：")
+            .. tostring(draft.status or "pending")
+            .. " · "
+            .. #(draft.changes or {})
+            .. L(" change(s) · ", " 项 · ")
+            .. selected
+            .. L(" selected", " 已选")
+    else
+        lines[#lines + 1] = L("draft: none", "草稿：无")
+    end
+    local ai = require("todo.config").get().ai
+    local usage = ctl.ai:usage(ctl.id)
+    local budget = L("budget: ", "预算：") .. string.format("~$%.5f", usage.usd)
+    if ai.session_budget_usd then
+        budget = budget .. string.format(" / $%.2f", ai.session_budget_usd)
+    end
+    if ai.daily_budget_usd then
+        budget = budget .. string.format(L(" · today $%.5f / $%.2f", " · 今日 $%.5f / $%.2f"), usage.today_usd, ai.daily_budget_usd)
+    end
+    lines[#lines + 1] = budget
+    lines[#lines + 1] = L("AI: ", "AI：") .. (ai.enabled and L("enabled", "已启用") or L("disabled", "未启用"))
+    lines[#lines + 1] = L("last: ", "最近：") .. (event and event.text or L("none", "无"))
+    vim.cmd("botright new")
+    local buf = vim.api.nvim_get_current_buf()
+    vim.bo[buf].buftype = "nofile"
+    vim.bo[buf].bufhidden = "wipe"
+    vim.bo[buf].swapfile = false
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    vim.keymap.set("n", "q", function()
+        vim.api.nvim_buf_delete(buf, { force = true })
+    end, { buffer = buf })
 end
 return M

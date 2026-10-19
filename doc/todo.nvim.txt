@@ -15,7 +15,7 @@ CONTENTS                                                        *todo-contents*
 1. INTRODUCTION                                                   *todo-intro*
 
 todo.nvim manages personal tasks in one local SQLite database. It provides a
-responsive floating dashboard and a sidebar with the same views and actions.
+responsive floating dashboard and a sidebar with the same scopes and actions.
 Neovim 0.10+, kkharji/sqlite.lua, MunifTanjim/nui.nvim, and a system SQLite
 shared library are required.
 
@@ -36,8 +36,8 @@ Use |:checkhealth| todo to diagnose the installation.
     },
     ui = {
       default_mode = "float",
-      default_view = "active", -- or emergency, by_urgency, by_time,
-                               -- by_tag, notices, archived
+      default_view = "active", -- or today, emergency, notices, archived;
+                               -- by_urgency/time/tag == active + grouping
       markdown = true, -- render the detail pane and description as markdown
       float = { width = 0.80, height = 0.75, border = "rounded" },
       sidebar = { width = 42, side = "right" },
@@ -84,9 +84,10 @@ notifications; sync_status() returns local status and displays it.
 
                                                              *:Todo*
 :Todo [open] [float|sidebar] [view]
-        Open a task view. The view is one of active, emergency, by_urgency,
-        by_time, by_tag, notices, or archived. With no arguments, use
-        configured defaults.
+        Open a task view. The view is one of today, active, emergency,
+        notices, or archived. by_urgency, by_time, and by_tag are accepted
+        as active with that grouping. With no arguments, use configured
+        defaults.
 
 :Todo toggle [float|sidebar]
         Toggle the panel.
@@ -148,8 +149,9 @@ Existing mappings are not overwritten. Panel-local mappings:
   p            postpone the overdue task (input defaults to 1d)
   /            search                  f      filter
   g            manage tags
-  v            choose view             r      refresh
-  [/]          previous/next view      <Esc>  clear filters, else close
+  v            choose view/grouping    r      refresh
+  o            change grouping         <Esc>  clear filters, else close
+  [/]          previous/next scope
   ? / <F1>     contextual help         q      close
   U / <C-r>    undo / redo saved task operations
 
@@ -180,8 +182,8 @@ todo or in_progress status with a past deadline qualify.
 
 The dashboard shows two-line task cards. At 100 or more available columns, the
 floating view adds a fixed detail pane; narrow layouts open details with Enter.
-Use [ and ] to change views and h/l to move between the list and details in a
-wide dashboard.
+Use [ and ] to change scope and o to change grouping; h/l move between the list
+and details in a wide dashboard.
 In the list, gg/G select the first/last row and Ctrl-U/Ctrl-D move by half the
 visible list height. In the fixed detail pane and detail popup, j/k, gg/G and
 Ctrl-U/Ctrl-D navigate detail text without changing task selection or focus.
@@ -206,11 +208,12 @@ detail overlay to shrink this race, but cannot eliminate it for every
 third-party plugin. Report it upstream, or set ui.markdown = false to opt
 out of filetype = "markdown" entirely.
 
-Seven views are available: active (grouped by status), emergency (urgency-ranked
-candidates), by_urgency (all open tasks grouped by urgency band), by_time (all
-open tasks ordered by time remaining, grouped into overdue/today/this week/
-later/no deadline), by_tag (a tree with one root per tag plus Untagged), notices
-and archived. Header tabs wrap onto extra lines when the window is narrow.
+Five scopes are available as header tabs: active, today, emergency, notices,
+and archived. Active, today, and emergency can be grouped by status, urgency,
+time remaining (overdue/today/this week/later/no deadline), or tag (a tree with
+one root per tag plus Untagged). by_urgency/by_time/by_tag are aliases for
+active with that grouping. This keeps the tab bar short while preserving every
+previous view.
 
 Every section header folds with <Tab> or za; zR expands all and zM collapses
 all. Folds are remembered per view while the panel stays open, and j/k walk

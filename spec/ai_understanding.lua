@@ -74,6 +74,11 @@ ai.opts.transport = function(opts, cb)
                     task_ref = snapshot.tasks[1].task_ref,
                     after = { description = "Verify API acceptance and write a report." },
                 },
+                {
+                    kind = "plan_add",
+                    task_ref = snapshot.tasks[1].task_ref,
+                    after = { minutes = 10 },
+                },
             },
         }
     vim.defer_fn(function()

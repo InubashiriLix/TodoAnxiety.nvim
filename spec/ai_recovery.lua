@@ -4,11 +4,14 @@ require("todo.config").setup({ reminders = { enabled = false }, ai = { enabled =
 vim.notify = function() end
 local evidence = require("todo.ai.evidence")
 assert(evidence.matches("Check every morning and evening", { "Check every morning\r\n  and evening" }))
+assert(evidence.matches("Check every morning and evening", { "Check every morning，and evening" }))
+assert(evidence.matches("Use 「page content」", { 'Use "page content"' }))
 assert(not evidence.matches("Check on the 23rd", { "Check on the 22nd" }))
 assert(not evidence.matches("finished", { "not done" }))
 assert(not evidence.matches("one two", { "one", "two" }))
 assert(not evidence.matches(" \n ", { "text" }))
 assert(not evidence.matches({}, { "text" }))
+assert(not evidence.matches("1.5 days", { "15 days" }), "punctuation-only matching must not merge numbers")
 local store = require("todo.store").open(vim.fn.tempname() .. ".db")
 local ws = require("todo.workspace").new(store)
 local svc = require("todo.service").new(store)
@@ -50,7 +53,7 @@ local ai = require("todo.ai").new(ws, svc, {
                     { kind = "plan_add", task_ref = t.task_ref, after = { minutes = 10, group = "next", position = i } }
             end
             response = { action = "draft", summary = "Complete", changes = changes }
-        elseif n == 1 or n == 5 then
+        elseif n == 1 or n == 4 then
             response = {
                 action = "question",
                 message = "When should we check?",
@@ -58,8 +61,17 @@ local ai = require("todo.ai").new(ws, svc, {
                     goal_clear = true,
                     goal = "Activate service",
                     deliverable = "Service active",
-                    unknowns = { "When" },
-                    evidence = { "Activate service" },
+                    unknowns = { "When", "Who", "Where", "Why", "How", "Cost", "Risk", "Priority", "Scope", "Backup" },
+                    evidence = {
+                        "Activate service",
+                        "Activate service",
+                        "Activate service",
+                        "Activate service",
+                        "Activate service",
+                        "Activate service",
+                        "Activate service",
+                        "Activate service",
+                    },
                 },
                 questions = {
                     {
@@ -81,15 +93,15 @@ local ai = require("todo.ai").new(ws, svc, {
                 assert(repair:find("Check every morning", 1, true), "repair must offer current answer excerpts")
             end
             response = result(snapshot, "Expected completion on the 23rd") -- a paraphrase is not a quotation
-        elseif n == 6 then
+        elseif n == 5 then
             failed = true
             vim.defer_fn(function()
                 cb("HTTP 503", nil)
             end, 5)
             return { running = true, cancel = function() end }
         else
-            response = result(snapshot, n == 4 and "Check every morning and evening" or "Activate service")
-            if n == 7 then
+            response = result(snapshot, "Check every morning and evening")
+            if n == 6 then
                 local sent = vim.json.encode(body.messages)
                 assert(sent:find("Updated follow-up at noon", 1, true))
                 assert(
@@ -128,46 +140,56 @@ assert(ctl:prepare())
 ctl:start()
 wait()
 local first = ctl:current()
+local first_session = ctl:item(first)
+assert(#first_session.understanding.unknowns == 8, "over-limit unknowns must be clamped")
+assert(#first_session.understanding.evidence == 6, "over-limit evidence must be clamped")
 local round = ctl:item(first).round
 round.answers.when = { selected = {}, notes = { wait = "Check every morning\n  and evening" } }
 local transcript = require("todo.ai.questions").transcript(round)
 assert(not transcript:find("unknown / skipped", 1, true), "notes must count as supplied information")
 ctl:submit("", round)
 wait()
-assert(#requests == 3 and ctl.state.status == "paused" and ctl.state.last_error)
+assert(#requests == 4 and ctl.state.status == "awaiting" and not ctl.state.last_error, ctl.state.last_error or "expected task two question")
 local session = ctl:item(first)
-assert(session.round.status == "pending" and session.pending_request)
-assert(session.questions == 1, "failed responses must not consume question rounds")
-local messages = #session.messages
--- Upgrade recovery for an already failed session from the previous version.
-session.pending_request = nil
-session.round.status = "submitted"
-ws:put("conversation", session.id, session)
-ctl:start()
-wait() -- retry saved answer, then advance to the second task
-assert(#requests == 5 and ctl.state.status == "awaiting", ctl.state.last_error)
-session = ctl:item(first)
-assert(
-    session.review and not session.pending_request and #session.messages == messages + 1,
-    "retry duplicated a user message"
-)
+assert(session.review, "degraded evidence must still complete the item review")
+assert(session.understanding and session.understanding.goal_clear == false, "unverified evidence must be demoted")
+assert(session.questions == 1, "degraded evidence must not consume question rounds")
+local degraded_note = false
+for _, value in ipairs(session.understanding.unknowns) do
+    if value:find("could not be verified", 1, true) then
+        degraded_note = true
+    end
+end
+assert(degraded_note, "degraded evidence must leave an explicit unknown")
 assert(ai:usage(ctl.id).unknown >= 1, "malformed provider usage must be unknown, never crash")
 local second = ctl:current()
-assert(first.uuid ~= second.uuid)
+assert(second and first.uuid ~= second.uuid, "second task must become current")
 round = ctl:item(second).round
 round.answers.when = { selected = {}, notes = {}, custom = "Original follow-up" }
 ctl:submit("", round)
 wait()
-assert(failed and ctl.state.status == "paused")
+assert(failed and ctl.state.status == "paused", "task two failure must pause the workflow")
 -- Simulate reopening after failure, then editing and resubmitting the same round.
 package.loaded["todo.ai.daily"] = nil
 ctl = require("todo.ai.daily").new(ws, svc, ai, "2026-10-17", { view = "active", task_uuids = seed })
 round = ctl:item(second).round
-assert(round.status == "pending")
+assert(round and round.status == "pending", "failed round must remain pending: " .. tostring(round and round.status))
 round.answers.when.custom = "Updated follow-up at noon"
 ctl:submit("", round)
 wait()
-assert(edited and #requests == 8 and ctl.state.status == "review", ctl.state.last_error)
+assert(edited and #requests == 8 and ctl.state.status == "review", ctl.state.last_error or "retry must complete the plan")
+local second_session = ctl:item(second)
+assert(
+    second_session.understanding and second_session.understanding.goal_clear == false,
+    "unverified task evidence must degrade instead of blocking"
+)
+local retried_users = 0
+for _, message in ipairs(ctl:item(second).messages) do
+    if message.role == "user" and message.origin ~= "workflow" then
+        retried_users = retried_users + 1
+    end
+end
+assert(retried_users == 1, "retry duplicated a user message")
 assert(select(1, ctl:counts()) == 2)
 local draft = assert(ws:get("draft", ctl.state.draft_id))
 assert(#draft.changes == 2)
@@ -178,6 +200,9 @@ for _, change in ipairs(draft.changes) do
 end
 ctl.planner:apply(draft, selected)
 assert(#ctl.planner:today(ctl.date).items == 2)
+assert(ws:get("draft", draft.id).status == "applied")
+ctl.planner:apply(draft, selected)
+assert(#ctl.planner:today(ctl.date).items == 2, "reapplying an applied draft must be idempotent")
 assert(svc:undo())
 assert(#ctl.planner:today(ctl.date).items == 0)
 store:close()

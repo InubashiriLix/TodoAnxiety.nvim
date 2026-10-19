@@ -72,6 +72,8 @@ function M.run(args)
             vim.api.nvim_buf_set_text(buf, cursor[1] - 1, col, cursor[1] - 1, col, { asset.markdown })
         elseif command == "diagnostics" then
             require("todo.diagnostics").open()
+        elseif command == "status" then
+            require("todo.ui.daily").status()
         elseif command == "today" then
             todo.today(rest)
         elseif command == "routines" then
@@ -152,6 +154,7 @@ function M.complete(arglead, cmdline)
             "clarify",
             "ai",
             "diagnostics",
+            "status",
             "image",
             "open",
             "toggle",

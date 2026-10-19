@@ -31,11 +31,6 @@ fails(function()
 end, "two options")
 fails(function()
     questions.normalize({
-        questions = { { id = "six", question = "Pick", options = { "A", "B", "C", "D", "E", "F" } } },
-    }, 4)
-end, "six options")
-fails(function()
-    questions.normalize({
         questions = { { id = "dup", question = "Pick", options = { "Same", "same", "C" } } },
     }, 4)
 end, "duplicate labels")
@@ -49,6 +44,57 @@ assert(tools.validate_option_count(0, false))
 fails(function()
     tools.validate_option_count(2, false)
 end, "tool schema option count")
+-- Malformed entries and extra questions must not discard an otherwise usable round.
+local compact = questions.normalize({
+    questions = {
+        { id = "bad", question = "", options = {} },
+        { id = "one", question = "Keep one?", options = {} },
+        { id = "two", question = "Keep two?", options = {} },
+        { id = "three", question = "Drop three?", options = {} },
+    },
+}, 2)
+assert(#compact.questions == 2 and compact.questions[1].id == "one", "invalid questions must be dropped")
+assert(compact.questions[2].id == "two", "rounds must be truncated to the configured limit")
+-- Reproduces the "invalid options" failure from providers that return >5 choices.
+local many = questions.normalize({
+    questions = {
+        { id = "many", question = "Pick one", options = { "A", "B", "C", "D", "E", "F" } },
+    },
+}, 4)
+assert(#many.questions[1].options == 5, "extra options must be truncated instead of failing")
+local not_list = questions.normalize({
+    questions = {
+        { id = "open", question = "Explain", options = { a = "A", b = "B" } },
+    },
+}, 4)
+assert(#not_list.questions[1].options == 0, "non-list options must fall back to open-ended")
+local long_option = questions.normalize({
+    questions = {
+        {
+            id = "long",
+            question = "Pick",
+            options = {
+                { label = string.rep("L", 600), description = string.rep("D", 2500) },
+                { label = "B" },
+                { label = "C" },
+            },
+        },
+    },
+}, 4)
+assert(#long_option.questions[1].options[1].label == 500, "option labels must be clamped")
+assert(#long_option.questions[1].options[1].description == 2000, "option descriptions must be clamped")
+-- A declined question counts as handled and tells the AI not to ask again.
+local declined = questions.normalize({
+    questions = {
+        { id = "q1", question = "First?", options = {} },
+        { id = "q2", question = "Second?", options = {} },
+    },
+}, 4)
+declined.answers.q1 = { selected = {}, notes = {}, custom = "", declined = true }
+assert(questions.answered(declined, declined.questions[1]), "declined questions count as answered")
+assert(not questions.answered(declined, declined.questions[2]))
+assert(questions.transcript(declined):find("no answer needed", 1, true))
+assert(questions.display(declined):find("Skipped", 1, true))
 
 -- Long transcripts keep all answers and options without collapsing into an
 -- unreadable single line.

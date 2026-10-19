@@ -71,6 +71,8 @@ if [[ -d "$nui_path" && -d "$sqlite_path" ]]; then
   nvim "${args[@]}" --cmd "set columns=140 lines=45" -l spec/planner_ui.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/redesign.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_ui.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_note.lua
+  nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_skip_question.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/card_bars.lua
   nvim "${args[@]}" --cmd "set columns=120 lines=45" -l spec/today_operator.lua
   nvim "${args[@]}" --cmd "set columns=160 lines=50" -l spec/daily_flow.lua

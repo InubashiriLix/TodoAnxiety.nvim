@@ -3,7 +3,12 @@ vim.env.XDG_STATE_HOME = vim.fn.tempname()
 require("todo.config").setup({
     db_path = vim.fn.tempname() .. ".db",
     reminders = { enabled = false },
-    ai = { enabled = true, api_key = "mock-daily-ui" },
+    ai = {
+        enabled = true,
+        api_key = "mock-daily-ui",
+        session_budget_usd = 1.00,
+        daily_budget_usd = 2.00,
+    },
 })
 local todo = require("todo")
 local svc = todo._service()
@@ -92,6 +97,24 @@ assert(
     o.controller.state.last_error
 )
 vim.wait(100)
+assert(
+    vim.api.nvim_get_current_win() == o.questions.winid,
+    "new question pane must appear and take focus after the reply"
+)
+assert(footer(o):find("left $", 1, true), "footer must show remaining planning budget")
+assert(footer(o):find("today $", 1, true), "footer must show today's budget usage")
+assert(footer(o):find("Skip task", 1, true), "footer must advertise skipping to the next item")
+local header_text = table.concat(vim.api.nvim_buf_get_lines(o.header.bufnr, 0, -1, false), "\n")
+assert(header_text:find("Next", 1, true), "header must show the next action")
+assert(header_text:find("checked", 1, true), "header must show checked progress")
+assert(header_text:find("deferred", 1, true), "header must show deferred progress")
+assert(o.contexts[o.composing_key].question, "composer must bind to the first question")
+local direct_round = o.controller.cache.rounds[o.controller:item_id(o.controller:current())]
+vim.api.nvim_buf_set_lines(o.composer.bufnr, 0, -1, false, { "direct supplement" })
+vim.wait(50)
+assert(direct_round.answers.q.custom == "direct supplement", "typed supplement must reach the answer")
+vim.api.nvim_buf_set_lines(o.composer.bufnr, 0, -1, false, { "" })
+vim.wait(50)
 vim.api.nvim_set_current_win(o.questions.winid)
 -- Tab opens the supplement editor; Tab again saves and returns to options.
 press("<Tab>")
@@ -246,6 +269,39 @@ o2.render()
 local timeline = table.concat(vim.api.nvim_buf_get_lines(o2.timeline.bufnr, 0, -1, false), "\n")
 assert(timeline:find("Unverified response", 1, true) and not timeline:find("private/path", 1, true))
 assert(footer(o2):find("Retry saved request", 1, true))
+-- Budget pauses expose B; accepting a new limit resumes the saved request.
+local budget_start = ctl2.start
+local resumed = 0
+ctl2.start = function()
+    resumed = resumed + 1
+end
+ctl2.state.last_error = "本次规划费用已达到预算；可修改预算后继续，已完成结果会保留。"
+o2.render()
+assert(footer(o2):find("Adjust budget", 1, true), "budget pauses must advertise B")
+local old_input = vim.ui.input
+vim.ui.input = function(_, cb)
+    cb("3.50")
+end
+press("B")
+vim.ui.input = old_input
+ctl2.start = budget_start
+assert(resumed == 1, "raising a budget must resume the saved request")
+assert(require("todo.config").get().ai.session_budget_usd == 3.5)
+assert(not ctl2.state.last_error)
+-- x opens a single fix menu instead of making users hunt through views.
+ctl2.state.last_error = "HTTP 429 rate limit"
+o2.render()
+local fix_options
+local old_select = vim.ui.select
+vim.ui.select = function(items, _, cb)
+    fix_options = items
+    cb(nil)
+end
+press("x")
+vim.ui.select = old_select
+assert(fix_options and #fix_options >= 2, "x must open fix options")
+assert(fix_options[1].label:find("Retry", 1, true), "fix options must include retry")
+assert(fix_options[#fix_options].label:find("diagnostics", 1, true), "fix options must include diagnostics")
 ctl2.state.last_error, ctl2.partial = nil, nil
 -- Returning to preparation must not use the last option note as today's intention.
 ctl2.state.intent = "Today's original intention"

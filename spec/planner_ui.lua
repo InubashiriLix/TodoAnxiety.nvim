@@ -99,11 +99,28 @@ local ok, err = xpcall(function()
     ws:put("draft", draft.id, draft)
     owner = ui.review(draft.id)
     assert(svc.store:get(t.id).description == "原始描述", "opening review must not apply")
-    vim.api.nvim_win_set_cursor(owner.popup.winid, { 4, 0 })
+    local review_lines = vim.api.nvim_buf_get_lines(owner.popup.bufnr, 0, -1, false)
+    local change_row = 1
+    for index, line in ipairs(review_lines) do
+        if line:find("○", 1, true) or line:find("✓", 1, true) then
+            change_row = index
+            break
+        end
+    end
+    vim.api.nvim_win_set_cursor(owner.popup.winid, { change_row, 0 })
     press("<Space>")
     assert(ws:get("draft", draft.id).changes[1].selected)
     press("a")
     assert(svc.store:get(t.id).description == "明确后的描述")
+    local applied_description = svc.store:get(t.id).description
+    owner = ui.review(draft.id)
+    assert(ws:get("draft", draft.id).status == "applied", "apply must persist the applied status")
+    press("a")
+    assert(owner.closed, "reopening an applied draft must close without an error")
+    assert(
+        svc.store:get(t.id).description == applied_description,
+        "reapplying an applied draft must not change the task again"
+    )
     press("U")
     assert(svc.store:get(t.id).description == "原始描述")
     panel.close()

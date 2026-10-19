@@ -66,7 +66,7 @@ function M.open()
         if uv.fs_stat(path) then
             for _, line in ipairs(vim.fn.readfile(path)) do
                 local ok, e = pcall(vim.json.decode, line)
-                if ok then
+                if ok and type(e) == "table" then
                     lines[#lines + 1] = string.format(
                         "%s  %s  %s  %s  %s ms",
                         e.time or "",
@@ -76,7 +76,11 @@ function M.open()
                         e.elapsed_ms or ""
                     )
                     if e.error then
-                        lines[#lines + 1] = "  " .. e.error
+                        -- Logged errors may contain newlines; nvim_buf_set_lines
+                        -- rejects them, so render every physical line separately.
+                        for _, part in ipairs(vim.split(tostring(e.error), "\n", { plain = true })) do
+                            lines[#lines + 1] = "  " .. (part:gsub("\r$", ""))
+                        end
                     end
                 end
             end
