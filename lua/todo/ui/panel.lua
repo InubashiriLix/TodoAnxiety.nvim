@@ -463,8 +463,28 @@ end
 --- Detail panes render markdown, so treesitter owns the highlighting and we
 --- hand back an empty decoration list.
 local function detail_content(task)
+    if not task then
+        return {}, {}
+    end
     local snapshot = state.owner and state.owner.snapshot
-    return markdown.task_lines(task, { notes = snapshot and snapshot:list("note") }), {}
+    if not (snapshot and snapshot.live) then
+        return markdown.task_lines(task, { notes = snapshot and snapshot:list("note") }), {}
+    end
+    local key = tostring(task.id)
+        .. ":"
+        .. tostring(snapshot and snapshot:version("task") or 0)
+        .. ":"
+        .. tostring(snapshot and snapshot:version("note") or 0)
+    local owner = state.owner
+    if owner and owner.detail_cache and owner.detail_cache.key == key then
+        return owner.detail_cache.lines, owner.detail_cache.decorations
+    end
+    local lines = markdown.task_lines(task, { notes = snapshot and snapshot:list("note") })
+    local decorations = {}
+    if owner then
+        owner.detail_cache = { key = key, lines = lines, decorations = decorations }
+    end
+    return lines, decorations
 end
 
 local function apply_decorations(buf, decorations, offset)

@@ -206,6 +206,29 @@ local function open_only(tasks)
     end, tasks)
 end
 
+-- The core RPC returns the full task set and dominates tab-switch latency.
+-- Cache the raw list per workspace generation; copy it before view-specific
+-- sorting/filtering so switching back to a previous tab stays cheap.
+function M:_raw_tasks(archived)
+    local ws = self.store.workspace
+    local generation = ws and (ws.generation or 0) or nil
+    if not generation then
+        return self.store:list({ archived = archived })
+    end
+    self._raw_cache = self._raw_cache or {}
+    local key = archived and "archived" or "active"
+    local cached = self._raw_cache[key]
+    if not cached or cached.generation ~= generation then
+        cached = { generation = generation, tasks = self.store:list({ archived = archived }) }
+        self._raw_cache[key] = cached
+    end
+    local tasks = {}
+    for index, task in ipairs(cached.tasks) do
+        tasks[index] = task
+    end
+    return tasks
+end
+
 function M:list(view, filters, now)
     if view == "today" then
         local ws = require("todo.workspace").new(self.store)
@@ -240,7 +263,7 @@ function M:list(view, filters, now)
         end
         return result
     end
-    local tasks = self.store:list({ archived = view == "archived" })
+    local tasks = self:_raw_tasks(view == "archived")
     if view == "notices" then
         tasks = vim.tbl_filter(function(task)
             return task.kind == "notice"
@@ -465,7 +488,7 @@ function M:delete_tag(name)
     return deleted, deleted and nil or { tag = "not_found" }
 end
 
-function M:stats()
+function M:_stats_uncached()
     if self.store.stats then
         return self.store:stats()
     end
@@ -479,6 +502,20 @@ function M:stats()
             return task.kind == "notice"
         end, active),
     }
+end
+
+function M:stats()
+    local ws = self.store.workspace
+    local generation = ws and (ws.generation or 0) or nil
+    if not generation then
+        return self:_stats_uncached()
+    end
+    self._stats = self._stats or {}
+    if not self._stats.value or self._stats.generation ~= generation then
+        self._stats.value = self:_stats_uncached()
+        self._stats.generation = generation
+    end
+    return self._stats.value
 end
 
 return M

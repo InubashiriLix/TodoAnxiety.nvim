@@ -45,6 +45,11 @@ local function callback(key)
     assert(mapping.callback, "missing mapping: " .. key)
     return mapping.callback()
 end
+local function mapping_callback(key)
+    local mapping = vim.fn.maparg(key, "n", false, true)
+    assert(mapping.callback, "missing mapping: " .. key)
+    return mapping.callback
+end
 local function benchmark(name)
     callback("j")
     callback("k") -- prime target detail and theme caches
@@ -77,6 +82,26 @@ end
 local panel = require("todo.ui.panel")
 panel.open({ view = "active" })
 vim.api.nvim_set_current_win(panel.inspect_state().owner.list.winid)
+-- Regrouped views must reuse one raw task fetch and one stats query per generation.
+svc._raw_cache, svc._stats = nil, nil
+local raw_calls, stat_calls = 0, 0
+local original_list, original_stats = svc.store.list, svc.store.stats
+svc.store.list = function(self, opts)
+    raw_calls = raw_calls + 1
+    return original_list(self, opts)
+end
+svc.store.stats = function(self)
+    stat_calls = stat_calls + 1
+    return original_stats(self)
+end
+svc:list("active")
+svc:list("by_time")
+svc:list("by_tag")
+svc:stats()
+svc:stats()
+svc.store.list, svc.store.stats = original_list, original_stats
+assert(raw_calls == 1, "regrouped views refetched the raw task list: " .. raw_calls)
+assert(stat_calls == 1, "stats were recomputed on every render: " .. stat_calls)
 benchmark("main")
 panel.close()
 local owner = todo.plan({

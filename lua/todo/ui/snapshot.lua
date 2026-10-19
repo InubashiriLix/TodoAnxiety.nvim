@@ -37,7 +37,11 @@ function M.new(service)
     return self
 end
 function M:version(kind)
-    return math.max(self.live.reset_generation or 0, (self.live.generations or {})[kind] or 0)
+    local live = self.live
+    if not live then
+        return 0
+    end
+    return math.max(live.reset_generation or 0, (live.generations or {})[kind] or 0)
 end
 function M:invalidate()
     self.records, self.documents, self.usages = {}, {}, {}

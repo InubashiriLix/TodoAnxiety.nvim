@@ -1,8 +1,27 @@
 local core = require("todo.core")
 local M = {}
 
+local function cache_key(task, now)
+    return table.concat({
+        task.sync_uuid or task.id or "",
+        task.due_date or "",
+        task.due_time or "",
+        tostring(task.priority or ""),
+        task.status or "",
+        tostring(task.archived_at or ""),
+        tostring(math.floor(now / 30)),
+    }, "\0")
+end
+
 function M.calculate(task, now)
-    return core.request("core.urgency", { task, now or os.time() })
+    now = now or os.time()
+    local key = cache_key(task, now)
+    if task._urgency_key == key then
+        return task._urgency
+    end
+    local value = core.request("core.urgency", { task, now })
+    task._urgency, task._urgency_key = value, key
+    return value
 end
 
 function M.is_candidate(task)
@@ -14,11 +33,22 @@ end
 --- Decorate and sort every task by urgency without filtering out non-candidates.
 function M.rank(tasks, now)
     now = now or os.time()
-    local values = core.request("core.urgency_batch", { tasks, now })
-    assert(type(values) == "table" and #values == #tasks, "todo-core returned an invalid urgency batch")
+    local missing = {}
+    for _, task in ipairs(tasks) do
+        if task._urgency_key ~= cache_key(task, now) then
+            missing[#missing + 1] = task
+        end
+    end
+    if #missing > 0 then
+        local values = core.request("core.urgency_batch", { missing, now })
+        assert(type(values) == "table" and #values == #missing, "todo-core returned an invalid urgency batch")
+        for index, task in ipairs(missing) do
+            task._urgency, task._urgency_key = values[index], cache_key(task, now)
+        end
+    end
     local decorated = {}
-    for index, task in ipairs(tasks) do
-        local urgency = values[index]
+    for _, task in ipairs(tasks) do
+        local urgency = task._urgency
         task.urgency = urgency
         decorated[#decorated + 1] = { task = task, urgency = urgency }
     end
