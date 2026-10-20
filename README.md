@@ -411,9 +411,7 @@ The add/edit form uses separate controls instead of parsing a text buffer:
 
 Use Tab and Shift-Tab to move between fields. In the description editor's
 Insert mode, Tab and Shift-Tab are left to editing and completion plugins;
-press Escape first, then Tab or Shift-Tab to switch fields. Use `:w` to save, `:wq` / `:x` to save and return, and Normal `+` to maximize the focused field. Use `q` or Escape
-in Normal mode, or `<C-q>` from either mode, to close. In Insert mode Escape
-still only leaves Insert, so it never closes a field you are typing in. Unsaved
+press Escape first, then Tab or Shift-Tab to switch fields. Use `:w` to save, `:wq` / `:x` to save and return, and Normal `+` to expand/restore the focused field. Use `q`, `<C-q>`, or `:q` to close. Escape never closes the form: in Insert mode it only leaves Insert, and Normal-mode Escape no longer closes it. Unsaved
 forms ask whether to save, discard, or continue editing. Dashboard buffers locally
 block mouse clicks/drags and Ctrl-h/j/k/l to protect keyboard selection; mappings
 in other windows remain unchanged. AI panes support Normal-mode Ctrl-h/j/k/l.

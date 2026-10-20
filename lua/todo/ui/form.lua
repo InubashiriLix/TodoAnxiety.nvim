@@ -399,17 +399,16 @@ function M.open(task, on_save, opts)
                 out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
                 out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
             end
-            out[#out + 1] = context.e("Esc :w", "save", "保存", g.submit, g.submit)
+            out[#out + 1] = context.e("Esc then +", "expand / restore field", "退出插入后用 + 展开／还原", g.nav, g.nav)
+            out[#out + 1] = context.e("Esc then :w", "save", "退出插入后保存", g.submit, g.submit)
             out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
         else
             out[#out + 1] = context.e("<Tab>", "next field", "下一字段", g.nav, g.nav)
             out[#out + 1] = context.e("<S-Tab>", "previous field", "上一字段", g.nav, g.nav)
             out[#out + 1] =
                 context.e(":w / :wq", "save / save and return", "保存／保存并返回", g.submit, g.submit)
-            out[#out + 1] = context.e("+", "maximize / restore field", "最大化／还原当前字段", g.nav, g.nav)
-            out[#out + 1] = context.e("q", "close", "关闭", g.close, g.close)
-            out[#out + 1] = context.e("<Esc>", "close", "关闭", g.close, g.close)
-            out[#out + 1] = context.e("<C-q>", "close", "关闭", g.close, g.close)
+            out[#out + 1] = context.e("+", "expand / restore field", "展开／还原当前字段", g.nav, g.nav)
+            out[#out + 1] = context.e("q / <C-q>", "close", "关闭", g.close, g.close)
         end
         return out
     end
@@ -1210,8 +1209,7 @@ function M.open(task, on_save, opts)
             end, { buffer = component.bufnr })
         end
         vim.keymap.set("n", "q", request_close, { buffer = component.bufnr })
-        -- Normal-mode Esc only; insert-mode Esc must still leave insert.
-        vim.keymap.set("n", "<Esc>", request_close, { buffer = component.bufnr })
+        -- Esc is deliberately left to Vim: in Insert it only leaves Insert.
         vim.keymap.set("n", "<C-q>", request_close, { buffer = component.bufnr })
         vim.keymap.set("i", "<C-q>", function()
             vim.schedule(request_close)

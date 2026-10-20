@@ -169,8 +169,9 @@ New changes clear redo. Undo refuses to overwrite externally modified tasks.
 Creation, permanent deletion and bulk tag changes are excluded. Unsaved text
 retains native Neovim undo.
 
-The form uses CTRL-S to save, q or Escape in Normal mode to close, and CTRL-Q
-to close from either mode. In Insert mode Escape only exits Insert.
+The form uses CTRL-S to save, q / CTRL-Q / :q to close, and Normal + to
+expand or restore the focused field. Escape never closes the form: in Insert
+mode it only exits Insert, and Normal-mode Escape does not close.
 
 Press p on an overdue task in the list, sidebar, details or reminder popup to open an input
 prefilled with 1d. Enter sets the deadline to submission time plus 24 hours;
@@ -372,6 +373,7 @@ TODAY AND AI PLANNING                                      *todo-ai-planning*
 Today keys: t toggle membership, T remove (legacy), J/K reorder, L lock, m fields, C capacity, b date,
 P AI plan, Q clarify, N notes. Standard task actions and U/Ctrl-r still work.
 Review: Space select, Enter compare, e edit, f feedback, a apply, t talk.
+Review editor: Enter saves, + expands, Ctrl-q closes; Esc only leaves Insert.
 Conversation: Enter/a/i answer, s skip, g draft now, v review, E extended changes,
 V text-only mode,
 + question allowance, c cancel request. Answer editor: Normal Enter/Esc save and return, Ctrl-q cancel,
@@ -448,7 +450,8 @@ vim:tw=78:ts=8:noet:ft=help:norl:
 UI navigation and editing:~
 Normal + maximizes/restores the focused pane. Task editor :w saves in place;
 :wq/:x saves and returns to the parent panel. :q refuses unsaved changes, and
-:q! discards changes since the explicit save. AI input Insert Enter/Tab remain
+:q! discards changes since the explicit save. In the task editor, + expands the
+focused field; Escape only mode-switches, and q / CTRL-Q / :q closes. AI input Insert Enter/Tab remain
 native; Esc leaves Insert, then Enter/Esc saves the draft and returns to choices.
 Ctrl-Alt-u/d scroll visible AI context half a page, Ctrl-Alt-b/f a full page,
 without leaving the composer. Ctrl-Alt-g resumes following the latest response.

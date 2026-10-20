@@ -215,7 +215,10 @@ local function editor(title, text, on_save, store, on_asset)
             style = "rounded",
             text = {
                 top = " " .. title .. " ",
-                bottom = " NORMAL: Enter / Esc " .. L("save & return", "保存并返回") .. " · :w ",
+                bottom = " NORMAL: Enter " .. L("save & return", "保存并返回")
+                    .. " · + " .. L("expand", "展开")
+                    .. " · Ctrl-q " .. L("close", "关闭")
+                    .. " · :w ",
                 top_align = "left",
             },
         },
@@ -257,9 +260,7 @@ local function editor(title, text, on_save, store, on_asset)
         close()
     end
     commands = require("todo.ui.editor_commands").attach(pop, { save = persist, close = close })
-    for _, key in ipairs({ "<CR>", "<Esc>" }) do
-        vim.keymap.set("n", key, safe(save), { buffer = pop.bufnr, silent = true, nowait = true })
-    end
+    vim.keymap.set("n", "<CR>", safe(save), { buffer = pop.bufnr, silent = true, nowait = true })
     vim.keymap.set("n", "<Plug>(TodoEditorCancel)", close, { buffer = pop.bufnr, silent = true })
     vim.keymap.set("n", "<C-q>", close, { buffer = pop.bufnr, silent = true })
     vim.keymap.set("i", "<C-q>", "<Esc><Plug>(TodoEditorCancel)", { buffer = pop.bufnr, silent = true })

@@ -89,5 +89,45 @@ assert(count == 1, "repeated write duplicated task")
 vim.cmd("wq")
 vim.wait(30)
 assert(#vim.api.nvim_list_wins() == 1)
+
+local function feed(keys)
+    vim.fn.feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt")
+    vim.wait(30)
+end
+
+-- Esc only changes mode in the task form; it must never request a close.
+o = open()
+assert(vim.api.nvim_buf_call(o.components.description.bufnr, function()
+    return vim.fn.maparg("<Esc>", "n")
+end) == "", "task form must not map Normal Esc to close")
+feed("<Esc>")
+assert(not o.closed, "Esc must not close the task form")
+feed("+")
+assert(o.maximized == 7, "Normal + must expand the focused description field")
+feed("+")
+assert(not o.maximized, "Normal + must restore the description field")
+form.close(true)
+
+-- The AI proposal editor follows the same protocol: Esc never saves/closes,
+-- Enter saves, and + expands the popup.
+local saved_proposal
+local proposal = require("todo.ui.planner").editor("Edit detail", "old", function(value)
+    saved_proposal = value
+    return true
+end)
+vim.wait(30)
+assert(vim.api.nvim_buf_call(proposal.bufnr, function()
+    return vim.fn.maparg("<Esc>", "n")
+end) == "", "proposal editor must not map Normal Esc to save/close")
+feed("<Esc>")
+assert(vim.api.nvim_win_is_valid(proposal.winid), "Esc must not close the proposal editor")
+local proposal_width = vim.api.nvim_win_get_width(proposal.winid)
+feed("+")
+assert(vim.api.nvim_win_get_width(proposal.winid) > proposal_width, "+ must expand the proposal editor")
+feed("+")
+vim.api.nvim_buf_set_lines(proposal.bufnr, 0, -1, false, { "changed" })
+feed("<CR>")
+assert(saved_proposal == "changed", "Enter must save the proposal editor")
+
 print("ok - real :w/:wq/:x/:q/:q!, failed persistence, parent window and repeated creation")
 vim.cmd("qa!")
