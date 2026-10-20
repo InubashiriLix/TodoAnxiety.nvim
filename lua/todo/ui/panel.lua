@@ -2709,5 +2709,20 @@ end
 function M.inspect_state()
     return state
 end
+-- Capture enough presentation state to reopen the dashboard after the daily
+-- planner closes. Internal views keep their scope, grouping, filters and
+-- selected task; the daily planner itself is not part of this snapshot.
+function M.return_context()
+    if not owner_valid() then
+        return nil
+    end
+    return {
+        mode = state.mode,
+        view = state.view,
+        planning_date = state.planning_date,
+        filters = vim.deepcopy(state.filters or {}),
+        selected_id = state.selected_id,
+    }
+end
 
 return M

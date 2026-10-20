@@ -69,7 +69,9 @@ function M.open(opts)
         current.close()
     end
     require("todo.ui.planner").close()
-    require("todo.ui.panel").close()
+    local panel = require("todo.ui.panel")
+    local return_to = panel.return_context()
+    panel.close()
     vim.cmd("stopinsert")
     require("todo.ui.highlights").setup()
     view.theme()
@@ -81,6 +83,7 @@ function M.open(opts)
     local owner = {
         controller = ctl,
         origin = opts.view or ctl.origin,
+        return_to = return_to,
         closed = false,
         composers = {},
         sent_text = {},
@@ -495,6 +498,13 @@ function M.open(opts)
         end
         if current == owner then
             current = nil
+        end
+    end
+    function owner.back()
+        local target = owner.return_to
+        owner.close()
+        if target then
+            require("todo.ui.panel").open(target)
         end
     end
     local pane_names = { "timeline", "questions", "composer" }
@@ -1320,7 +1330,10 @@ function M.open(opts)
                             "预算中断后调整 AI 预算并继续"
                         ),
                     },
-                    { key = "Ctrl-q", label = L("Pause and close", "暂停并关闭") },
+                    {
+                        key = "q / Ctrl-q",
+                        label = L("Pause and return to the previous panel", "暂停并返回上一个界面"),
+                    },
                     {
                         key = keys.label("discard"),
                         label = L(
@@ -1741,8 +1754,8 @@ function M.open(opts)
                 render()
             end
         end)
-        map(pop, "q", owner.close)
-        map(pop, "<C-q>", owner.close)
+        map(pop, "q", owner.back)
+        map(pop, "<C-q>", owner.back)
         map(pop, "<C-c>", function()
             ctl:pause()
         end)
