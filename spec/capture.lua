@@ -10,6 +10,7 @@ local ws = require("todo.workspace").new(store)
 local svc = require("todo.service").new(store)
 local task = assert(svc:create({ title = "Existing task", description = "Original" }))
 local seen = {}
+local ai_description = "## Goal\n- Call the bank"
 local ai = require("todo.ai").new(ws, svc, {
     transport = function(opts, cb)
         seen[#seen + 1] = opts
@@ -19,7 +20,14 @@ local ai = require("todo.ai").new(ws, svc, {
             result = {
                 action = "draft",
                 summary = "Captured",
-                changes = { { id = "new", kind = "task_create", after = { title = "Call the bank" } } },
+                changes = {
+                    {
+                        id = "new",
+                        kind = "task_create",
+                        after = { title = "Call the bank", description = ai_description },
+                    },
+                    { id = "plain", kind = "task_create", after = { title = "Plain task" } },
+                },
             }
         else
             result = {
@@ -53,6 +61,14 @@ end
 local capture = ai:start({ scope = "capture", extended = true })
 local done = send(capture, "I need to call the bank")
 assert(done.draft_id, "capture must produce a review draft")
+local captured = ws:get("draft", done.draft_id).changes[1]
+assert(captured.after.description == ai_description, "Markdown warnings must not rewrite AI text")
+local markdown_codes = {}
+for _, issue in ipairs(captured.markdown_issues or {}) do
+    markdown_codes[issue.code] = true
+end
+assert(markdown_codes.heading_space and markdown_codes.list_space, "capture must attach Markdown warnings")
+assert(not ws:get("draft", done.draft_id).changes[2].markdown_issues, "empty optional descriptions must not warn")
 local system = seen[1].body.messages[1].content or " "
 assert(system:find("CAPTURE MODE", 1, true), "capture prompt missing")
 local update = ai:start({ task_id = task.id, scope = "update", extended = true })

@@ -32,6 +32,7 @@ fi
 nvim "${args[@]}" -l spec/stream.lua
 nvim "${args[@]}" -l spec/core.lua
 nvim "${args[@]}" -l spec/providers.lua
+nvim "${args[@]}" -l spec/ai_markdown.lua
 nvim "${args[@]}" -l spec/task_mark.lua
 nvim "${args[@]}" -l spec/run.lua
 nvim "${args[@]}" -l spec/postpone.lua

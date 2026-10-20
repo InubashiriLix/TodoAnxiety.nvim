@@ -93,12 +93,15 @@ local ok, err = xpcall(function()
                 expected_revision = svc.store:get(t.id).sync_revision,
                 after = { description = "明确后的描述" },
                 reason = "补充目标",
+                markdown_issues = { { code = "wrapped" } },
             },
         },
     }
     ws:put("draft", draft.id, draft)
     owner = ui.review(draft.id)
     assert(svc.store:get(t.id).description == "原始描述", "opening review must not apply")
+    local review_text = table.concat(vim.api.nvim_buf_get_lines(owner.popup.bufnr, 0, -1, false), "\n")
+    assert(review_text:find("Markdown", 1, true), "review must warn about Markdown issues")
     local review_lines = vim.api.nvim_buf_get_lines(owner.popup.bufnr, 0, -1, false)
     local change_row = 1
     for index, line in ipairs(review_lines) do

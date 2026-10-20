@@ -6,6 +6,22 @@ local current
 local function L(en, zh)
     return require("todo.config").get().language == "zh-CN" and zh or en
 end
+local function markdown_issue_label(issue)
+    local labels = {
+        empty = L("content is empty", "内容为空"),
+        control = L("contains control characters", "包含控制字符"),
+        meta = L("remove labels such as '# description:' / '# note:'", "去掉 '# description:' / '# note:' 这类标签"),
+        h1 = L("use ## instead of # for sections", "章节标题用 ##，不要用 #"),
+        note_heading = L("a note should not start with a heading", "备注不要以标题开头"),
+        wrapped = L("do not wrap the whole text in a code fence", "不要把整段内容包在代码块里"),
+        fence = L("a code fence is not closed", "代码围栏没有闭合"),
+        fence_space = L("leave a blank line around code blocks", "代码块前后需要空行"),
+        heading_space = L("leave a blank line around headings", "标题前后需要空行"),
+        list_space = L("leave a blank line before a list", "列表前需要空行"),
+        html = L("avoid HTML tags", "不要使用 HTML 标签"),
+    }
+    return labels[issue.code] or tostring(issue.code)
+end
 local function dependencies()
     local todo = require("todo")
     local svc = todo._service()
@@ -617,6 +633,20 @@ function M.review(id)
         lines[#lines + 1] = "## " .. L("After", "修改后")
         lines[#lines + 1] = ""
         vim.list_extend(lines, readable(c.after))
+        if c.markdown_issues and #c.markdown_issues > 0 then
+            lines[#lines + 1] = ""
+            lines[#lines + 1] = "## " .. L("Markdown warning", "Markdown 提示")
+            for _, issue in ipairs(c.markdown_issues) do
+                lines[#lines + 1] = "- " .. markdown_issue_label(issue)
+            end
+            lines[#lines + 1] = ""
+            lines[#lines + 1] = "*"
+                .. L(
+                    "Advisory only; applying keeps the original AI text.",
+                    "仅为提示；应用时仍保留 AI 原文。"
+                )
+                .. "*"
+        end
         return lines
     end
     local function render()
@@ -659,6 +689,21 @@ function M.review(id)
         if applied then
             table.insert(lines, 3, L("This draft was already applied.", "该草稿已应用。"))
         end
+        local markdown_count = 0
+        for _, change in ipairs(draft.changes) do
+            if change.markdown_issues and #change.markdown_issues > 0 then
+                markdown_count = markdown_count + 1
+            end
+        end
+        if markdown_count > 0 then
+            table.insert(
+                lines,
+                3,
+                "⚠ "
+                    .. markdown_count
+                    .. L(" change(s) need Markdown review", " 项建议的 Markdown 格式需要检查")
+            )
+        end
         for _, c in ipairs(draft.changes) do
             local task = c.task_uuid and planner:task(c.task_uuid)
             lines[#lines + 1] = string.format(
@@ -668,7 +713,11 @@ function M.review(id)
                 task and task.title or (c.after and c.after.title) or L("New task", "新任务")
             )
             rows[#lines] = c
-            lines[#lines + 1] = "      " .. (c.reason or L("Review details before accepting", "查看详情后接受"))
+            local reason = c.reason or L("Review details before accepting", "查看详情后接受")
+            if c.markdown_issues and #c.markdown_issues > 0 then
+                reason = reason .. "  ⚠ " .. L("Markdown", "Markdown")
+            end
+            lines[#lines + 1] = "      " .. reason
             rows[#lines] = c
             lines[#lines + 1] = ""
         end
@@ -761,6 +810,13 @@ function M.review(id)
             local old = c.after[key]
             local function changed(value)
                 c.after[key] = value
+                if key == "text" or key == "description" then
+                    local issues = require("todo.ai.markdown").check(
+                        value,
+                        c.kind == "note" and "note" or "description"
+                    )
+                    c.markdown_issues = #issues > 0 and issues or nil
+                end
                 save()
                 render()
             end

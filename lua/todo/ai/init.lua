@@ -327,6 +327,27 @@ local function validate(result, s, revisions, plan_revision, refs)
         assert(type(c.id) == "string" and not seen[c.id], "duplicate operation ID")
         seen[c.id] = true
         assert(type(c.after or {}) == "table", "invalid operation body")
+        local markdown = require("todo.ai.markdown")
+        c.markdown_issues = nil
+        local description = type(c.after.description) == "string" and c.after.description or nil
+        if
+            description
+            and (
+                c.kind == "description"
+                or c.kind == "task_update"
+                or (c.kind == "task_create" and vim.trim(description) ~= "")
+            )
+        then
+            local issues = markdown.check(description, "description")
+            if #issues > 0 then
+                c.markdown_issues = issues
+            end
+        elseif c.kind == "note" and type(c.after.text) == "string" then
+            local issues = markdown.check(c.after.text, "note")
+            if #issues > 0 then
+                c.markdown_issues = issues
+            end
+        end
         if c.kind ~= "task_create" then
             local ref = c.task_ref or c.task_uuid or (c.after and (c.after.task_ref or c.after.task_uuid))
             local uuid = resolve_reference(ref, refs)
@@ -569,6 +590,7 @@ Changes have kind,task_ref,after,reason. Copy task_ref exactly from snapshot.tas
  Allowed kinds: plan_add,plan_update,plan_remove,note,description. Extended mode additionally task_update,task_create.
 Plan after:{group:"now|next|optional",minutes,position,next_action,completion,locked:false}. note after:{text}. description after:{description}.
 Task update fields: deadline,priority,status. Task create after is full task input {title,description,priority,deadline,reminder_interval}; create can be linked by plan_add.after.created_by = creation change id.
+MARKDOWN: description and note are Markdown bodies. Do not wrap them in ``` fences or add "# description:"/"# note:" labels. Use ## for sections (never #); leave a blank line before/after headings, lists and fenced code blocks; close every fence; avoid HTML. Prefer minimal edits over rewriting existing text.
 Do not change locked items. Respect the plan capacity and its exact reserve_ratio. Explain unassigned tasks and dependencies. Distinguish estimates from confirmed facts. Overdue alone is not highest priority. Preserve deadlines unless explicitly enabled extended mode.
 Ask only useful unknowns. Choose how many questions are needed in a round (up to the configured cap), and stop as soon as information is sufficient. Never repeat answered questions. User can skip. When told final draft, stop questions and list assumptions.
 QUESTION ROUND PROTOCOL: Default to 3-4 related questions per round when more than one useful unknown remains; ask fewer only when fewer are genuinely useful, never pad. Before every round, re-read all prior user answers and the previous round. Each question must target a specific unresolved gap or follow up on a vague, incomplete or contradictory answer. Do not run a fixed questionnaire. Options must be concrete, distinct and decision-relevant. For choice questions provide 3-5 options, covering plausible alternatives, tradeoffs and edge cases; include an explicit "Other / not sure" option when the list cannot cover reality. Use multiple=true whenever several independent choices may legitimately apply; do not force a single choice. Never collapse independent dimensions into one option. Update understanding.unknowns after each round: remove resolved items and add new ones revealed by the answers. Free-form user guidance is evidence and steering, not an answer to an option; absorb it and revise the questions or finish. Explain briefly in message what changed because of the user's steering.
