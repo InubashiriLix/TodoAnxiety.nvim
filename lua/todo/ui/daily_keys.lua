@@ -21,6 +21,7 @@ M.defaults = {
     edit_note = { "e" },
     input = { "i" },
     chat = { "t" },
+    discard = { "X" },
     return_to_choices = { "<CR>", "<Esc>", "<Tab>" },
 }
 function M.keys(action, options)

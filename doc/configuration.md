@@ -151,7 +151,8 @@ ui = {
     previous_question = { 'h', '<S-Tab>' },
     next_question = { 'l', '<Tab>' },
     select = '<CR>', toggle = '<Space>', preview = 'w',
-    edit_note = 'e', input = 'i', return_to_choices = { '<CR>', '<Esc>' },
+    edit_note = 'e', input = 'i', discard = 'X',
+    return_to_choices = { '<CR>', '<Esc>' },
     -- 某个动作设 false 可关闭其局部绑定。
   },
 }

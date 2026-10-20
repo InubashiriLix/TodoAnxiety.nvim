@@ -114,7 +114,8 @@ function M.open(opts)
     local requested, rendered = 0, 0
     local cache_pending = false
     local layout_signature
-    local render, reflow, submit, focus_input, edit_task, help, focus_pane, return_to_choices, bind_panes, adjust_budget
+    local render, reflow, submit, focus_input, edit_task, help, focus_pane, return_to_choices, bind_panes, adjust_budget,
+        discard_session
     local function safe(fn)
         return function(...)
             local args = { ... }
@@ -609,6 +610,9 @@ function M.open(opts)
         end
     end
     bind_panes = function(pop)
+        action(pop, "discard", function()
+            discard_session()
+        end)
         for name, direction in pairs({ focus_left = "h", focus_down = "j", focus_up = "k", focus_right = "l" }) do
             action(pop, name, function()
                 move_focus(direction)
@@ -880,6 +884,9 @@ function M.open(opts)
             end
             if vim_mode == "NORMAL" then
                 hint(keys.label("maximize"), owner.maximized and L("Restore", "还原") or L("Maximize", "最大化"))
+            end
+            if not editing and not ctl.busy and not ctl.permission and not owner.mode_picker then
+                hint(keys.label("discard"), L("Discard plan", "放弃本次规划"))
             end
             hint("F1", L("Help", "帮助"))
             if owner.unread_reply and keys.label("read_latest") ~= "" then
@@ -1314,6 +1321,13 @@ function M.open(opts)
                         ),
                     },
                     { key = "Ctrl-q", label = L("Pause and close", "暂停并关闭") },
+                    {
+                        key = keys.label("discard"),
+                        label = L(
+                            "Discard this planning session; tasks and applied changes stay",
+                            "放弃本次规划；保留任务和已应用修改"
+                        ),
+                    },
                     { key = "Tab (options)", label = L("Supplement current option", "补充当前选项") },
                     { key = "Tab / Enter (input)", label = L("Save and return to options", "保存并返回选项") },
                     { key = "Enter (options)", label = L("Confirm and next question", "确认并进入下一题") },
@@ -1575,6 +1589,50 @@ function M.open(opts)
             if action then
                 action.run()
             end
+        end)
+    end
+    discard_session = function()
+        if ctl.busy or ctl.permission or owner.mode_picker then
+            vim.notify(
+                L("Stop the active request before discarding", "请先停止当前请求再放弃规划"),
+                vim.log.levels.WARN,
+                { title = "todo.nvim" }
+            )
+            return
+        end
+        local discard = L("Discard", "放弃")
+        vim.ui.select({ discard, L("Cancel", "取消") }, {
+            prompt = L(
+                "Discard this planning session? Questions, task checks, pending drafts and unsaved text will be deleted. Tasks, schedule, applied changes and usage stay.",
+                "放弃本次规划？将删除问答、任务检查、未应用草稿和未发送文字；任务、日程、已应用修改和费用记录会保留。"
+            ),
+        }, function(choice)
+            if choice ~= discard or owner.closed then
+                return
+            end
+            local fallback = {
+                date = ctl.date,
+                view = ctl.view,
+                filters = vim.deepcopy(ctl.filters or {}),
+                task_uuids = vim.deepcopy(ctl.state.seed_uuids or {}),
+            }
+            owner.close()
+            local ok, opts = pcall(ctl.discard, ctl)
+            if not ok then
+                vim.notify(
+                    L("Could not discard planning state: ", "无法丢弃规划状态：") .. tostring(opts),
+                    vim.log.levels.ERROR,
+                    { title = "todo.nvim" }
+                )
+                opts = fallback
+            else
+                vim.notify(
+                    L("Discarded this planning session", "已放弃本次规划"),
+                    vim.log.levels.INFO,
+                    { title = "todo.nvim" }
+                )
+            end
+            M.open(opts)
         end)
     end
     for _, pop in ipairs({ owner.timeline, owner.questions }) do

@@ -87,6 +87,17 @@ assert(title(o.questions):find("Tasks", 1, true))
 vim.wait(60) -- Focus-dependent hints settle after WinEnter.
 assert(footer(o):find("Confirm fixed items", 1, true))
 assert(not footer(o):find("Add note", 1, true), "preparation edits the task, not an answer")
+assert(footer(o):find("Discard", 1, true), "preparation footer must advertise discarding the session")
+local old_owner = o
+local old_select = vim.ui.select
+vim.ui.select = function(items, _, choose)
+    choose(items[1])
+end
+press("X")
+vim.ui.select = old_select
+assert(old_owner.closed, "discard must close the old planning UI")
+o = ui.inspect_state()
+assert(o and o ~= old_owner and o.controller.state.status == "preparing", "discard must reopen a fresh preparation")
 press("<Space>")
 press("<CR>")
 press("w")

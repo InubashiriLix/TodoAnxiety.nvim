@@ -543,8 +543,15 @@ local function planner_action(action, role)
                     scope[#scope + 1] = task.sync_uuid
                 end
             end
+            local date = is_today() and (state.planning_date or planner:today().date) or nil
+            local current = is_today() and planner:date() or nil
+            if date and current and not state.planning_date_explicit and date < current then
+                date = current
+                state.planning_date = current
+                ws.store:set_setting("planning_view_date", current)
+            end
             require("todo").plan({
-                date = is_today() and planner:today().date or nil,
+                date = date,
                 view = state.scope,
                 filters = vim.deepcopy(state.filters or {}),
                 task_uuids = is_today() and nil or scope,
@@ -2515,6 +2522,22 @@ function M.open(opts)
     state.group = grouping.group_of(requested_view)
     state.view = grouping.compose(state.scope, state.group)
     state.filters = opts.filters or state.filters or {}
+    local normalized_date = opts.planning_date
+    local explicit_date = type(normalized_date) == "string"
+        and require("todo.model").parse_deadline(normalized_date) ~= nil
+    state.planning_date, state.planning_date_explicit = nil, explicit_date
+    pcall(function()
+        local svc = service()
+        if not svc.store.db then
+            return
+        end
+        local ws = require("todo.workspace").new(svc.store)
+        if not explicit_date then
+            normalized_date = require("todo.planning").new(ws, svc):date()
+        end
+        ws.store:set_setting("planning_view_date", normalized_date)
+        state.planning_date = normalized_date
+    end)
     if opts.selected_id == nil and opts.view and previous_view and state.view ~= previous_view then
         state.selected_id = nil
     end

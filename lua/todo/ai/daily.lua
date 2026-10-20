@@ -125,16 +125,91 @@ function M:emit()
     end
 end
 function M:save()
+    if self.discarded then
+        return
+    end
     self.state.updated_at = os.time()
     self.ws:put("conversation", self.id, self.state)
     self:emit()
 end
 function M:save_cache()
+    if self.discarded then
+        return
+    end
     local tmp = self.cache_path .. ".tmp"
     local fd = assert(uv.fs_open(tmp, "w", 384))
     assert(uv.fs_write(fd, codec.encode(self.cache), 0))
     uv.fs_close(fd)
     assert(uv.fs_rename(tmp, self.cache_path))
+end
+-- Abandon this dated workflow without touching tasks, the schedule, applied
+-- changes, usage records or memory. The caller closes the UI first so no
+-- listener can observe the half-removed session.
+function M:discard()
+    assert(not self.busy, "Stop the active request before discarding")
+    local uuids = {}
+    for _, entry in ipairs(self.state.queue or {}) do
+        if entry.uuid then
+            uuids[entry.uuid] = true
+        end
+    end
+    for _, uuid in pairs(self.state.task_refs or {}) do
+        uuids[uuid] = true
+    end
+    local related = { [self.id] = true }
+    local drafts = {}
+    if self.state.draft_id then
+        drafts[self.state.draft_id] = true
+    end
+    local changes, seen = {}, {}
+    local function remove(kind, key)
+        local id = kind .. "/" .. key
+        if not seen[id] then
+            seen[id] = true
+            changes[#changes + 1] = { kind = kind, key = key, value = nil }
+        end
+    end
+    for _, record in ipairs(self.ws:list("conversation")) do
+        local value = record.value or {}
+        local match = record.key == self.id
+            or value.workflow_id == self.id
+            or (
+                value.scope == "daily_item"
+                and value.date == self.date
+                and uuids[value.subject_uuid]
+                and not value.workflow_id
+            )
+        if match then
+            related[record.key] = true
+            if value.draft_id then
+                drafts[value.draft_id] = true
+            end
+            remove("conversation", record.key)
+        end
+    end
+    for _, record in ipairs(self.ws:list("draft")) do
+        local value = record.value or {}
+        if
+            (drafts[record.key] or related[value.workflow_id] or related[value.session_id])
+            and value.status ~= "applied"
+        then
+            remove("draft", record.key)
+        end
+    end
+    if #changes > 0 then
+        self.ws:batch(changes, "discard")
+    end
+    self.discarded = true
+    vim.fn.delete(self.cache_path)
+    vim.fn.delete(self.cache_path .. ".tmp")
+    self.cache = {}
+    instances[self.ws][self.id] = nil
+    return {
+        date = self.date,
+        view = self.view,
+        filters = vim.deepcopy(self.filters or {}),
+        task_uuids = vim.deepcopy(self.state.seed_uuids or self.seed_uuids or {}),
+    }
 end
 local function day_before(date)
     local year, month, day = date:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")

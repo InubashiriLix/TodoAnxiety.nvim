@@ -116,6 +116,26 @@ assert(svc.store:list({ archived = false })[1].description:find("Complete descri
 ctl:pause()
 assert(ctl.state.status == "review", "closing review preserves status")
 print("ok - 25 tasks sequential review, proposals only, final assembly, atomic approval and undo")
+local applied_id = ctl.state.draft_id
+assert(ws:get("draft", applied_id).status == "applied")
+local first_entry = ctl.state.queue[1]
+local first_session = assert(ctl:item(first_entry))
+local pending_item_draft = assert(first_session.draft_id)
+local usage_count = #ws:list("usage")
+ctl:save_cache()
+assert(vim.uv.fs_stat(ctl.cache_path), "cache should exist before discard")
+local fresh_opts = ctl:discard()
+assert(not ws:get("conversation", ctl.id), "discard must remove the workflow conversation")
+assert(not ws:get("conversation", ctl:item_id(first_entry)), "discard must remove item conversations")
+assert(not ws:get("draft", pending_item_draft), "discard must remove pending item drafts")
+assert(ws:get("draft", applied_id).status == "applied", "discard must keep applied drafts")
+assert(#ws:list("usage") == usage_count, "discard must keep usage records")
+assert(not vim.uv.fs_stat(ctl.cache_path), "discard must remove the local cache")
+local fresh = require("todo.ai.daily").new(ws, svc, ai, ctl.date, fresh_opts)
+assert(fresh ~= ctl and fresh.state.status == "preparing", "discard must create a fresh workflow")
+assert(not fresh.state.locks_confirmed and fresh.state.draft_id == nil, "fresh form must be unconfirmed and draft-free")
+assert(not fresh:item(fresh.state.queue[1]), "fresh workflow must not resume old item checks")
+print("ok - discard removes sessions, pending drafts and caches while preserving applied work and usage")
 local c, w, service, api, requests = fixture(1, function(s, n, body)
     if s.reviews then
         return { message = "Ready", action = "draft", summary = "Ready", changes = {} }

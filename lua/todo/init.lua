@@ -360,10 +360,11 @@ end
 function M.today(date)
     local ws = require("todo.workspace").new(M._service().store)
     local planner = require("todo.planning").new(ws, M._service())
-    date = date and date ~= "" and date or planner:date()
+    local explicit = date and date ~= ""
+    date = explicit and date or planner:date()
     assert(require("todo.model").parse_deadline(date), "invalid planning date")
     ws.store:set_setting("planning_view_date", date)
-    M.open({ view = "today" })
+    M.open({ view = "today", planning_date = explicit and date or nil })
 end
 function M.plan(opts)
     local result
