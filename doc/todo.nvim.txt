@@ -234,7 +234,9 @@ ordinary editing buffers retain their original mappings.
 The task form has separate title, priority, status, deadline, tag, and
 description controls. Tab and Shift-Tab move focus, except in the description's
 Insert mode where editing/completion retains both keys. Press Escape, then
-Tab/Shift-Tab to switch fields from the description. Deadline selection opens a
+Tab/Shift-Tab to switch fields from the description. Press Normal-mode N to
+pick and edit the task's notes, including AI-authored ones; clearing a note
+removes it. Deadline selection opens a
 calendar with hjkl day movement, [/]/PageUp/PageDown month movement, Enter to
 choose, g for today, t for the unrestricted time editor, and x to clear. In the
 time editor, type HHMM directly; h/l changes fields, j/k adjusts by one, and J/K

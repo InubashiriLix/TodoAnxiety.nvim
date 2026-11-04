@@ -666,39 +666,12 @@ local function planner_action(action, role)
                 end
             end)
         elseif action == "note" then
-            local notes = { { label = L("New note", "新建备注") } }
-            for _, r in ipairs(ws:list("note")) do
-                if r.value.task_uuid == task.sync_uuid then
-                    notes[#notes + 1] = { label = r.value.text:sub(1, 70), record = r }
-                end
-            end
-            vim.ui.select(notes, {
-                prompt = L("Task notes", "任务备注"),
-                format_item = function(n)
-                    return n.label
-                end,
-            }, function(choice)
-                if not choice then
-                    return
-                end
-                local r = choice.record
-                require("todo.ui.planner").editor(
-                    L("Task note", "任务备注"),
-                    r and r.value.text or "",
-                    function(value)
-                        planner:transaction("Task note", function()
-                            ws:put("note", r and r.key or require("todo.sync.codec").uuid(), {
-                                task_uuid = task.sync_uuid,
-                                text = value,
-                                source = "user",
-                                created_at = r and r.value.created_at or os.time(),
-                            }, r and r.revision)
-                        end)
-                        render()
-                    end,
-                    svc.store
-                )
-            end)
+            require("todo.ui.task_note").edit(task, {
+                service = svc,
+                workspace = ws,
+                planner = planner,
+                on_change = render,
+            })
         end
     end)
     if not ok then

@@ -218,6 +218,7 @@ function M.open(task, on_save, opts)
         end
     end)
     components.description = popup(i18n.t("description"), { enter = true, wrap = true, markdown = true })
+    components.description.border:set_text("bottom", " N " .. i18n.t("edit_notes") .. " ", "right")
     components.footer = popup("", { border = false, enter = true })
     owner.components = components
 
@@ -408,6 +409,7 @@ function M.open(task, on_save, opts)
             out[#out + 1] =
                 context.e(":w / :wq", "save / save and return", "保存／保存并返回", g.submit, g.submit)
             out[#out + 1] = context.e("+", "expand / restore field", "展开／还原当前字段", g.nav, g.nav)
+            out[#out + 1] = context.e("N", "edit notes", "编辑备注", g.edit, g.edit)
             out[#out + 1] = context.e("q / <C-q>", "close", "关闭", g.close, g.close)
         end
         return out
@@ -1194,6 +1196,13 @@ function M.open(task, on_save, opts)
         vim.keymap.set("n", "<S-Tab>", function()
             focus(index - 1)
         end, { buffer = component.bufnr })
+        -- Notes are separate workspace records (including AI-authored ones), so
+        -- they live in their own editor instead of the description buffer.
+        vim.keymap.set("n", "N", function()
+            require("todo.ui.task_note").edit(owner.saved_task or task, {
+                on_change = render_footer,
+            })
+        end, { buffer = component.bufnr, silent = true })
         -- Description keeps native Insert-mode Tab/completion; only normal-mode
         -- Tab/Shift-Tab switch fields. Other fields keep the existing behaviour.
         if not opts.skip_insert_tab then

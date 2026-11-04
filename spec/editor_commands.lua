@@ -129,5 +129,37 @@ vim.api.nvim_buf_set_lines(proposal.bufnr, 0, -1, false, { "changed" })
 feed("<CR>")
 assert(saved_proposal == "changed", "Enter must save the proposal editor")
 
+-- N edits task notes, including AI-authored ones, without closing the form.
+local ws = require("todo.workspace").new(svc.store)
+ws:put("note", "ai-note-form", {
+    task_uuid = task.sync_uuid,
+    text = "confirm tablet get method and task details",
+    source = "ai",
+    created_at = 1,
+})
+o = open()
+local previous_select = vim.ui.select
+local planner = require("todo.ui.planner")
+local previous_editor = planner.editor
+local loaded
+vim.ui.select = function(items, _, callback)
+    callback(items[2])
+end
+planner.editor = function(_, value, save)
+    loaded = value
+    assert(save("edited from the form"))
+end
+feed("N")
+vim.ui.select = previous_select
+planner.editor = previous_editor
+assert(loaded == "confirm tablet get method and task details", "form N must load the AI note")
+assert(ws:get("note", "ai-note-form").text == "edited from the form", "form N must save the note")
+assert(not o.closed, "editing notes must keep the task form open")
+assert(
+    vim.api.nvim_get_current_win() == o.components.description.winid,
+    "note editing must return focus to the form"
+)
+form.close(true)
+
 print("ok - real :w/:wq/:x/:q/:q!, failed persistence, parent window and repeated creation")
 vim.cmd("qa!")

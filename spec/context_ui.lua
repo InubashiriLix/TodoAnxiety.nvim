@@ -59,6 +59,9 @@ test("task and notice descriptions retain insert Tab, normal Tab moves focus", f
         assert(not mapping(desc.bufnr, "i", "<Tab>"), module .. " must not map insert Tab")
         assert(not mapping(desc.bufnr, "i", "<S-Tab>"), module .. " must not map insert Shift-Tab")
         assert(mapping(desc.bufnr, "n", "<Tab>"))
+        if module == "todo.ui.form" then
+            assert(mapping(desc.bufnr, "n", "N"), "the task form must expose note editing")
+        end
         assert(mapping(state.components.title.bufnr, "i", "<Tab>"))
         vim.api.nvim_set_current_win(desc.winid)
         press("i<Tab>")
